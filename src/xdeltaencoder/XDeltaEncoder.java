@@ -376,13 +376,13 @@ public class XDeltaEncoder {
         tempFile1.deleteOnExit();
         tempFile2.deleteOnExit();
         ByteBuffer bb = null;
-        preparation_pass = do_preparation_pass;
-        int blockPrepFactor = 1;
-        if (preparation_pass) {
-            blockPrepFactor = 4;
-        }
+        preparation_pass = do_preparation_pass && (sourceLength > blocksize);
+        boolean origSourceInMemory = sourceInMemory;
         long origBlocksize = blocksize;
-        blocksize = blocksize * blockPrepFactor;
+        if (preparation_pass) {
+            blocksize = sourceLength;
+            sourceInMemory = false;
+        }
         //System.out.println("Blocksize = "+blocksize);
         processor.clearSource();
         processor.setKeepSource(false);
@@ -692,6 +692,7 @@ public class XDeltaEncoder {
                 if (preparation_pass && (sourcepos >= source.length())) {
                     // switch to normal pass
                     preparation_pass = false;
+                    sourceInMemory = origSourceInMemory;
 
                     sourcepos = 0;
                     if (sourceInMemory) {
