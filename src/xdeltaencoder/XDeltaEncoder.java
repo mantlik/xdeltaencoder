@@ -382,6 +382,7 @@ public class XDeltaEncoder {
         if (preparation_pass) {
             blocksize = sourceLength;
             sourceInMemory = false;
+            processor.firstMatch = true;
         }
         //System.out.println("Blocksize = "+blocksize);
         processor.clearSource();
@@ -693,6 +694,7 @@ public class XDeltaEncoder {
                     // switch to normal pass
                     preparation_pass = false;
                     sourceInMemory = origSourceInMemory;
+                    processor.firstMatch = false;
 
                     sourcepos = 0;
                     if (sourceInMemory) {
