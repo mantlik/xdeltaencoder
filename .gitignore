@@ -1,3 +1,5 @@
 /dist
 /build
-/nbproject/private/
+/javaxdelta/target
+/javaxdelta/test
+/nbproject/private
