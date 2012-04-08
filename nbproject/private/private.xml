@@ -1,15 +1,4 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project-private xmlns="http://www.netbeans.org/ns/project-private/1">
     <editor-bookmarks xmlns="http://www.netbeans.org/ns/editor-bookmarks/1"/>
-    <open-files xmlns="http://www.netbeans.org/ns/projectui-open-files/1">
-        <file>file:/C:/Users/fm/Documents/NetBeansProjects/XDeltaEncoder/src/xdeltaencoder/XDeltaEncoder.java</file>
-        <file>file:/C:/Users/fm/Documents/NetBeansProjects/XDeltaEncoder/src/xdeltaencoder/LimitInputStream.java</file>
-        <file>file:/C:/Users/fm/Documents/NetBeansProjects/XDeltaEncoder/src/xdeltaencoder/MultifileSeekableSource.java</file>
-        <file>file:/C:/Users/fm/Documents/NetBeansProjects/XDeltaEncoder/src/xdeltaencoder/SplitOutputStream.java</file>
-        <file>file:/C:/Users/fm/Documents/NetBeansProjects/XDeltaEncoder/src/xdeltaencoder/SplitInputStream.java</file>
-        <file>file:/C:/Users/fm/Documents/NetBeansProjects/XDeltaEncoder/src/xdeltaencoder/CompareOutputStream.java</file>
-        <file>file:/C:/Users/fm/Documents/NetBeansProjects/XDeltaEncoder/src/xdeltaencoder/RandomDataSeekableSource.java</file>
-        <file>file:/C:/Users/fm/Documents/NetBeansProjects/XDeltaEncoder/src/xdeltaencoder/RandomDataInputStream.java</file>
-        <file>file:/C:/Users/fm/Documents/NetBeansProjects/XDeltaEncoder/src/xdeltaencoder/TargetInputStream.java</file>
-    </open-files>
 </project-private>
