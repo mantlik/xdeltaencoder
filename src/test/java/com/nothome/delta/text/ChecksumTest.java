@@ -23,7 +23,7 @@ public class ChecksumTest {
         int d = Delta.DEFAULT_CHUNK_SIZE;
         Checksum cs = new Checksum(DeltaTest.forFile("/ver1.txt"), d);
         String s = "xxx yyy zzz\r\nxxx yyy zzz\r\nxxx yyy zzz".substring(0, d);
-        long queryChecksum = Checksum.queryChecksum(CharBuffer.wrap(s), d);
+        long queryChecksum = cs.queryChecksum(CharBuffer.wrap(s), d);
         System.out.println(cs);
         System.out.println(queryChecksum);
         Integer i = cs.findChecksumIndex(queryChecksum);

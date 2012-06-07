@@ -51,14 +51,15 @@ public class ChecksumTest {
         byte[] bytes = s.getBytes("ASCII");
         ByteBufferSeekableSource source = new ByteBufferSeekableSource(bytes);
         Checksum checksum = new Checksum(source, chunk);
+        checksum.init(source, chunk);
         ByteBuffer bb = ByteBuffer.wrap(bytes);
-        long hash = Checksum.queryChecksum(bb, chunk);
+        long hash = checksum.queryChecksum(bb, chunk);
         assertEquals(0, checksum.findChecksumIndex(hash));
         bb.position(chunk);
-        long hash2 = Checksum.queryChecksum(bb, chunk);
+        long hash2 = checksum.queryChecksum(bb, chunk);
         assertEquals(1, checksum.findChecksumIndex(hash2));
         for (int i = 0; i < chunk; i++)
-            hash = Checksum.incrementChecksum(hash, bb.get(bb.position() - chunk), bb.get(), chunk);
+            hash = checksum.incrementChecksum(hash, bb.get(bb.position() - chunk), bb.get(), chunk);
         assertEquals(hash2, hash);
     }
 }

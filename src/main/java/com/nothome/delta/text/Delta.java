@@ -237,7 +237,7 @@ public class Delta {
                         return -1;
                     }
                 }
-                hash = Checksum.queryChecksum(tbuf, S);
+                hash = source.checksum.queryChecksum(tbuf, S);
                 hashReset = false;
             }
             if (debug)
@@ -264,7 +264,7 @@ public class Delta {
             char b = tbuf.get();
             if (tbuf.remaining() >= S) {
                 char nchar = tbuf.get( tbuf.position() + S -1 );
-                hash = Checksum.incrementChecksum(hash, b, nchar, S);
+                hash = source.checksum.incrementChecksum(hash, b, nchar, S);
             } else {
                 debug("out of char");
             }
@@ -311,7 +311,7 @@ public class Delta {
         }
 
         void hash() {
-            hash = Checksum.queryChecksum(tbuf, S);
+            hash = source.checksum.queryChecksum(tbuf, S);
         }
 
         /**

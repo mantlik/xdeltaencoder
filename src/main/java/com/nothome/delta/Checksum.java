@@ -24,12 +24,13 @@
  */
 package com.nothome.delta;
 
+import gnu.trove.THashMap;
+import gnu.trove.TIntArrayList;
 import gnu.trove.TIntIntHashMap;
 import gnu.trove.decorator.TIntIntHashMapDecorator;
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import gnu.trove.TIntArrayList;
-import gnu.trove.THashMap;
+import java.util.Random;
 
 /**
  * Checksum computation class.
@@ -37,11 +38,16 @@ import gnu.trove.THashMap;
 public class Checksum {
 
     static final boolean debug = false;
-    private TIntIntHashMap checksums = new TIntIntHashMap();
-    private THashMap <Integer,TIntArrayList> repchecksums = new THashMap<Integer,TIntArrayList>();
-    public static long spos = 0;
-    private static final char single_hash[] = {
-        /* Random numbers generated using SLIB's pseudo-random number generator. */
+    private THashMap<Integer, TIntIntHashMap> checksums = new THashMap<Integer, TIntIntHashMap>();
+    //private THashMap<Integer, TIntLongHashMap> repchecksums = new THashMap<Integer, TIntLongHashMap>();
+    public long spos = 0;
+    TIntArrayList currentList = new TIntArrayList();
+    private int currentPosition = 0;
+    final int MAX_INDEXES = 100;
+    private char single_hash[] = {
+        /*
+         * Random numbers generated using SLIB's pseudo-random number generator.
+         */
         0xbcd1, 0xbb65, 0x42c2, 0xdffe, 0x9666, 0x431b, 0x8504, 0xeb46,
         0x6379, 0xd460, 0xcf14, 0x53cf, 0xdb51, 0xdb08, 0x12c8, 0xf602,
         0xe766, 0x2394, 0x250d, 0xdcbb, 0xa678, 0x02af, 0xa5c6, 0x7ea6,
@@ -77,12 +83,25 @@ public class Checksum {
     };
 
     /**
-     * Initialize checksums for source. The checksum for the <code>chunkSize</code> bytes at offset
+     * Initialize checksums for source. The checksum for the
+     * <code>chunkSize</code> bytes at offset
      * <code>chunkSize</code> * i is inserted into a hash map.
      */
-    public Checksum(SeekableSource source, int chunkSize) throws IOException {
+    private Checksum(SeekableSource source, int chunkSize, long seed,
+            boolean genHash) throws IOException {
+        if (genHash) {
+            Random random = new Random(seed);
+            for (int i = 0; i < single_hash.length; i++) {
+                single_hash[i] = (char) (random.nextInt() & 0xffff);
+            }
+        }
+        //System.out.println();
+        //System.out.println("Generated "+checksums.size()+" hashes with "+repchecksums.size()+" duplicates.");
+    }
+    
+    public void init(SeekableSource source, int chunkSize) throws IOException {
         ByteBuffer bb = ByteBuffer.allocate(chunkSize * 2);
-        ByteBuffer cc = ByteBuffer.allocate(chunkSize * 2);
+        //ByteBuffer cc = ByteBuffer.allocate(chunkSize * 2);
         int count = 0;
         int rep = 0;
         spos = 0;
@@ -93,46 +112,64 @@ public class Checksum {
             if (bb.remaining() < chunkSize) {
                 break;
             }
+            TIntIntHashMap map;
             while (bb.remaining() >= chunkSize) {
                 long queryChecksum = queryChecksum0(bb, chunkSize);
+                int chu = ((int) (queryChecksum >> 32) & 0xffffffff);
                 int chs = (int) (queryChecksum & 0xffffffff);
                 //long chs = queryChecksum;
-                if (!checksums.contains(chs)) {
-                    checksums.put(chs, count++);
+                if (!checksums.contains(chu)) {
+                    map = new TIntIntHashMap();
+                    checksums.put(chu, map);
                 } else {  // duplicate checksum
-                    int oldpos = checksums.get(chs);
-                    if (oldpos >= 0) {  // first duplicate
-                        checksums.put(chs, -1);
-                        TIntArrayList l = new TIntArrayList ();
-                        repchecksums.put(chs, l);
-                        l.add(oldpos);
-                    }
-                    repchecksums.get(chs).add(count++);
+                    map = checksums.get(chu);
                 }
+                map.put(chs, count++);
             }
             bb.compact();
             rep++;
-            if (rep >= 100000) {
+            if (rep >= 5 + 10000000 / chunkSize) {
                 System.out.print("Computing hash table (" + spos / 1024 / 1024 + " mb)                                 \b\r");
                 rep = 0;
             }
-        }
-        //System.out.println();
-        //System.out.println("Generated "+checksums.size()+" hashes with "+repchecksums.size()+" duplicates.");
+        }        
     }
 
     /**
-     * Finds the checksum computed from the buffer.
-     * Marks, gets, then resets the buffer.
+     * Initialize checksum with seed-based random generated hashes
+     *
+     * @param source
+     * @param chunkSize
+     * @param seed
+     * @throws IOException
      */
-    public static long queryChecksum(ByteBuffer bb, int len) {
+    public Checksum(SeekableSource source, int chunkSize, long seed) throws IOException {
+        this(source, chunkSize, seed, true);
+    }
+
+    /**
+     * Create checksum, use default hashes
+     * 
+     * @param source
+     * @param chunkSize
+     * @throws IOException
+     */
+    public Checksum(SeekableSource source, int chunkSize) throws IOException {
+        this(source, chunkSize, 0, false);
+    }
+    
+    /**
+     * Finds the checksum computed from the buffer. Marks, gets, then resets the
+     * buffer.
+     */
+    public long queryChecksum(ByteBuffer bb, int len) {
         bb.mark();
         long sum = queryChecksum0(bb, len);
         bb.reset();
         return sum;
     }
 
-    private static long queryChecksum0(ByteBuffer bb, int len) {
+    private long queryChecksum0(ByteBuffer bb, int len) {
         int high = 0;
         int low = 0;
         for (int i = 0; i < len; i++) {
@@ -144,13 +181,14 @@ public class Checksum {
 
     /**
      * Increments a checksum.
+     *
      * @param checksum initial checksum
      * @param out byte leaving view
      * @param in byte entering view
      * @param chunkSize size of chunks
      * @return new checksum
      */
-    public static long incrementChecksum(long checksum, byte out, byte in, int chunkSize) {
+    public long incrementChecksum(long checksum, byte out, byte in, int chunkSize) {
         char old_c = single_hash[out + 128];
         char new_c = single_hash[in + 128];
         int low = ((int) ((checksum) & 0xffff) - old_c + new_c) & 0xffff;
@@ -159,9 +197,9 @@ public class Checksum {
     }
 
     /**
-     * 256 random hash values. 
+     * 256 random hash values.
      */
-    public static char[] getSingleHash() {
+    public char[] getSingleHash() {
         return single_hash;
     }
 
@@ -169,53 +207,28 @@ public class Checksum {
      * Finds the index of a checksum.
      */
     public int findChecksumIndex(long hashf) {
-        currentList = null;
+        //currentList.clear();
         int chs = (int) (hashf & 0xffffffff);
+        int chu = ((int) (hashf >> 32) & 0xffffffff);
         //long chs = hashf;
-        if (!checksums.contains(chs)) {
+        if (!checksums.contains(chu)) {
             return -1;
         }
-        int idx = checksums.get(chs);
-        if (idx < 0) {
-            currentList = repchecksums.get(chs);
-            currentPosition = 0;
-        } else {
-            return idx;
+        TIntIntHashMap map = checksums.get(chu);
+        if (!map.containsKey(chs)) {
+            return -1;
         }
-        return currentList.get(0);
+        return map.get(chs);
     }
-    TIntArrayList currentList;
-    int currentPosition;
-    
-    final int MAX_INDEXES = 100;
-    
-    public int nextIndex() {
-        if (currentList == null) {
-            return -1;
-        }
-        currentPosition++;
-        if (currentList.size()>MAX_INDEXES) {
-            if (currentPosition > MAX_INDEXES) {
-                currentPosition--;
-                return -1;
-            }
-            int index = (int) (Math.random()*currentList.size());
-            return currentList.get(index);
-        }
-        if (currentPosition >= currentList.size()) {
-            currentPosition--;
-            return -1;
-        }
-        return currentList.get(currentPosition);
-    }
-    
+
     /**
-     * Returns a debug <code>String</code>.
+     * Returns a debug
+     * <code>String</code>.
      */
     @Override
     public String toString() {
         return super.toString()
-                + " checksums=" + new TIntIntHashMapDecorator(this.checksums)
+                + " checksums=" + new TIntIntHashMapDecorator(this.checksums.get(0))
                 + "";
     }
 }

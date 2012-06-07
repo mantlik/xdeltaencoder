@@ -25,6 +25,7 @@
  */
 package org.mantlik.xdeltaencoder;
 
+import com.nothome.delta.GDiffPatcher;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
@@ -41,12 +42,14 @@ public class TargetInputStream extends FileInputStream {
     long read;
     long totalread;
     long filesize;
+    GDiffPatcher patcher = null;
     private final static DecimalFormat df = new DecimalFormat("0.00");
     private final static DecimalFormat df0 = new DecimalFormat("0");
 
-    public TargetInputStream(File file, long interval) throws FileNotFoundException {
+    public TargetInputStream(File file, long interval, GDiffPatcher patcher) throws FileNotFoundException {
         super(file);
         this.interval = interval;
+        this.patcher = patcher;
         read = 0;
         totalread = 0;
         filesize = file.length();
@@ -57,7 +60,12 @@ public class TargetInputStream extends FileInputStream {
         totalread += bytes;
         if (read >= interval) {
             double perc = 100d * totalread / filesize;
-            System.out.print("\rProcessed " + df0.format(totalread / 1024d / 1024d) + " mb " + df.format(perc) + " %          ");
+            if (patcher != null) {
+                System.out.print("\rProcessed " + df0.format(totalread / 1024d / 1024d) + " mb " + df.format(perc)
+                        + " % written " + df0.format(patcher.totalLength / 1024d / 1024d) + " mb      ");
+            } else {
+                System.out.print("\rProcessed " + df0.format(totalread / 1024d / 1024d) + " mb " + df.format(perc) + " %          ");
+            }
             read = 0;
         }
     }

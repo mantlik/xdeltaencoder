@@ -78,6 +78,8 @@ public class Delta {
     public boolean progress = false;
     public long targetsize = 0;
     public boolean firstMatch = false;
+    public boolean acceptHash = false;
+    public boolean duplicateChecksum = false;
 
     /**
      * Constructs a new Delta. In the future, additional constructor arguments
@@ -92,7 +94,17 @@ public class Delta {
     }
 
     public long getCheksumPos() {
-        return Checksum.spos;
+        if (source==null) {
+            return 0;
+        }
+        if (source.checksum == null) {
+            return 0;
+        }
+        long spos = source.checksum.spos;
+        if (duplicateChecksum && (source.checksum2 != null)) {
+            spos = (spos + source.checksum2.spos) / 2;
+        }
+        return spos;
     }
 
     /**
@@ -188,6 +200,10 @@ public class Delta {
 
         if ((source == null) || (!keepSource)) {
             source = new SourceState(seekSource);
+            source.checksum.init(seekSource, S);
+            if (duplicateChecksum) {
+                source.checksum2.init(seekSource, S);
+            }
         }
         target = new TargetState(targetIS);
         this.output = output;
@@ -195,7 +211,7 @@ public class Delta {
             debug("checksums " + source.checksum);
         }
         done = 0;
-        long nextDone = done + 1024 * 1024;
+        long nextDone = done;
 
         long loops = 0;
         long dupHashes = 0;
@@ -203,35 +219,21 @@ public class Delta {
             loops++;
             debug("!target.eof()");
             int index = target.find(source);
-            if (index != -1) {
+            if (index > -1) {
                 if (debug) {
                     debug("found hash " + index);
                 }
                 long offset = ((long) index) * S;
-                source.seek(offset);
-                target.matched.clear();
-                long bestOffset = offset;
-                int match = target.longestMatch(source);
-                int bestMatch = match;
-                if (!firstMatch) {
-                    while (index != -1) {
-                        //target.tbuf.position(target.tbuf.position() - match);
-                        index = target.findNext(source);
-                        if (index < 0) {
-                            break;
-                        }
-                        offset = ((long) index) * S;
-                        source.seek(offset);
-                        match = target.longestMatch(source);
-                        if (match > bestMatch) {
-                            bestMatch = match;
-                            bestOffset = offset;
-                        }
-                        dupHashes++;
-                    }
+                int match;
+                if (acceptHash) {
+                    match = S;
+                    target.tbuf.position(target.tbuf.position() + match);
+                    target.hashReset = true;
+                } else {
+                    source.seek(offset);
+                    target.matched.clear();
+                    match = target.longestMatch(source);
                 }
-                match = bestMatch;
-                offset = bestOffset;
                 debug("best match " + match + " at index " + (offset / S));
                 if (match >= S) {
                     if (debug) {
@@ -249,6 +251,7 @@ public class Delta {
                      */
                     try {
                         target.tbuf.position(target.tbuf.position() - match);
+                        target.hashReset = true;
                     } catch (IllegalArgumentException ex) {
                         System.err.println();
                         System.err.println("Match = " + match + " position = " + target.tbuf.position());
@@ -268,10 +271,12 @@ public class Delta {
                     nextDone += 1024 * 1024;
                 }
                 if (targetsize == 0) {
-                    System.out.print("Processed " + nextDone / 1024 / 1024 + " mb...                 \r");
+                    System.out.print("Processed " + nextDone / 1024 / 1024 + " mb so far fitted "
+                            + found / 1024 / 1024 + " mb   \r");
                 } else {
                     System.out.print("Processed " + nextDone / 1024 / 1024 + " mb ("
-                            + df.format(100.00d * nextDone / targetsize) + " %)                 \r");
+                            + df.format(100.00d * nextDone / targetsize) + " %) so far fitted "
+                            + found / 1024 / 1024 + " mb   \r");
                 }
                 nextDone += 1024 * 1024;
             }
@@ -295,10 +300,13 @@ public class Delta {
     class SourceState {
 
         private SeekableSource source;
-        private Checksum checksum;
+        private Checksum checksum, checksum2;
 
         public SourceState(SeekableSource source) throws IOException {
             checksum = new Checksum(source, S);
+            if (duplicateChecksum) {
+                checksum2 = new Checksum(source, S, System.currentTimeMillis());
+            }
             this.source = source;
             source.seek(0);
         }
@@ -324,8 +332,8 @@ public class Delta {
 
         private ReadableByteChannel c;
         private ByteBuffer tbuf = ByteBuffer.allocate(blocksize());
-        private ByteBuffer sbuf = ByteBuffer.allocate(blocksize());
-        private long hash;
+        private ByteBuffer sbuf = ByteBuffer.allocate(S);
+        private long hash, hash2;
         private boolean invalidHash = true;
         private boolean hashReset = true;
         private boolean eof;
@@ -337,7 +345,7 @@ public class Delta {
         }
 
         private int blocksize() {
-            return Math.min(1024 * 16, S * 4);
+            return Math.max(Math.min(1024 * 16, S * 4), S + 1024);
         }
 
         /**
@@ -371,13 +379,15 @@ public class Delta {
                 debug("hash " + hash + " " + dump());
             }
             int index = source.checksum.findChecksumIndex(hash);
-            return index;
-        }
-
-        public int findNext(SourceState source) throws IOException {
-            sbuf.clear();
-            sbuf.limit(0);
-            int index = source.checksum.nextIndex();
+            if (index == -1) {
+                return index;
+            }
+            if (duplicateChecksum) {
+                int index2 = source.checksum2.findChecksumIndex(hash2);
+                if (index2 != index) {
+                    return -1;
+                }
+            }
             return index;
         }
 
@@ -401,13 +411,30 @@ public class Delta {
             byte b = tbuf.get();
             if (tbuf.remaining() >= S) {
                 byte nchar = tbuf.get(tbuf.position() + S - 1);
-                hash = Checksum.incrementChecksum(hash, b, nchar, S);
+                hash = source.checksum.incrementChecksum(hash, b, nchar, S);
+                if (duplicateChecksum) {
+                    hash2 = source.checksum2.incrementChecksum(hash2, b, nchar, S);
+                }
                 invalidHash = false;
             } else {
                 debug("out of char");
                 invalidHash = true;
             }
             return b & 0xFF;
+        }
+
+        public void incrementChecksum(byte b) {
+            if (tbuf.remaining() >= S) {
+                byte nchar = tbuf.get(tbuf.position() + S - 1);
+                hash = source.checksum.incrementChecksum(hash, b, nchar, S);
+                if (duplicateChecksum) {
+                    hash2 = source.checksum2.incrementChecksum(hash2, b, nchar, S);
+                }
+                invalidHash = false;
+            } else {
+                debug("out of char");
+                invalidHash = true;
+            }
         }
 
         /**
@@ -436,7 +463,7 @@ public class Delta {
                     }
                 }
             }
-            hashReset = true;
+            //hashReset = true;
             while (true) {
                 if (!sbuf.hasRemaining()) {
                     sbuf.clear();
@@ -458,11 +485,12 @@ public class Delta {
                         return match;
                     }
                 }
-                byte b = sbuf.get();
-                if (b != tbuf.get()) {
+                byte b = tbuf.get();
+                if (b != sbuf.get()) {
                     tbuf.position(tbuf.position() - 1);
                     return match;
                 }
+                incrementChecksum(b);
                 matched.add(b);
                 match++;
                 if (match >= LONGEST_POSSIBLE_MATCH) {
@@ -484,7 +512,10 @@ public class Delta {
 
         void hash() {
             if (tbuf.remaining() >= S) {
-                hash = Checksum.queryChecksum(tbuf, S);
+                hash = source.checksum.queryChecksum(tbuf, S);
+                if (duplicateChecksum) {
+                    hash2 = source.checksum2.queryChecksum(tbuf, S);
+                }
                 invalidHash = false;
             } else {
                 invalidHash = true;
