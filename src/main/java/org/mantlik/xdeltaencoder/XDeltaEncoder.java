@@ -531,6 +531,7 @@ public class XDeltaEncoder {
         // processing passes
         int pass = 1;
         long fits = 0;
+        long preparation_data = 0;
         long missed = 0;
         long totmem = Runtime.getRuntime().maxMemory();
         long curmem;
@@ -582,6 +583,7 @@ public class XDeltaEncoder {
             processor.clearSource();
             pass++;
             fits = 0;
+            preparation_data = 0;
             if (!sourceInMemory) {
                 if (randomDataSource) {
                     asource = new RandomDataSeekableSource(randomDataSeed, sourceLength);
@@ -669,7 +671,7 @@ public class XDeltaEncoder {
                         if (op == 2) {
                             length = vinp.readInt();
                         } else {
-                            fits -= length;
+                            preparation_data += length;
                         }
                         //System.out.println("Passthrough " + len + " bytes");
                         for (int i = 0; i < length; i++) {
@@ -757,7 +759,8 @@ public class XDeltaEncoder {
                         filteredData = ((VirtualWriter) ddStream).filteredData;
                     }
                     System.out.print("Pass " + pass + " progress: " + df.format(100.00 * done / target.length())
-                            + " %, so far fitted " + df.format((processor.found - filteredData) / 1024d / 1024d) + " mb\b\r");
+                            + " %, so far fitted " + df.format((processor.found - preparation_data - filteredData) 
+                            / 1024d / 1024d) + " mb\b\r");
                 }
             }
 
