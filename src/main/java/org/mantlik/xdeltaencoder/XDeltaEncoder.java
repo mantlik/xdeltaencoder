@@ -668,6 +668,8 @@ public class XDeltaEncoder {
                     if ((op == 2) || (op == 4)) {
                         if (op == 2) {
                             length = vinp.readInt();
+                        } else {
+                            fits -= length;
                         }
                         //System.out.println("Passthrough " + len + " bytes");
                         for (int i = 0; i < length; i++) {
