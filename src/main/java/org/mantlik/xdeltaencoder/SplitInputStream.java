@@ -25,6 +25,7 @@
  */
 package org.mantlik.xdeltaencoder;
 
+import com.nothome.delta.GDiffPatcher;
 import java.io.*;
 import java.text.DecimalFormat;
 import java.util.TreeMap;
@@ -45,9 +46,10 @@ public class SplitInputStream extends InputStream {
     private long totalread = 0;
     private long read = 0;
     private long filesize = 0;
+    private GDiffPatcher patcher = null;
     
     
-    SplitInputStream (File dir, String prefix, long interval) {
+    SplitInputStream (File dir, String prefix, long interval,GDiffPatcher patcher) {
         File[] files = dir.listFiles();
         for (File f : files) {
             if (f.getName().equals(prefix)) {
@@ -60,6 +62,7 @@ public class SplitInputStream extends InputStream {
         }
         currentFile = namemap.firstKey();
         this.interval = interval;
+        this.patcher = patcher;
     }
 
     @Override
@@ -88,7 +91,12 @@ public class SplitInputStream extends InputStream {
         }
         if (read >= interval) {
             double perc = 100d * totalread / filesize;
-            System.out.print("\rProcessed " + df0.format(totalread / 1024d / 1024d) + " mb " + df.format(perc) + " %");
+            if (patcher != null) {
+                System.out.print("\rProcessed " + df0.format(totalread / 1024d / 1024d) + " mb " + df.format(perc)
+                        + " % written " + df0.format(patcher.totalLength / 1024d / 1024d) + " mb      ");
+            } else {
+                System.out.print("\rProcessed " + df0.format(totalread / 1024d / 1024d) + " mb " + df.format(perc) + " %          ");
+            }
             read = 0;
         }
         return i;

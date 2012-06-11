@@ -812,7 +812,7 @@ public class XDeltaEncoder {
             tempFile2.delete();
         }
 
-        if (tempFile3.exists()) {
+        if (do_preparation_pass && tempFile3.exists()) {
             tempFile3.delete();
         }
     }
@@ -1054,7 +1054,7 @@ public class XDeltaEncoder {
         }
         InputStream dd;
         if (splittedDelta) {
-            dd = new SplitInputStream(delta.getParentFile(), delta.getName(), 1024 * 1024);
+            dd = new SplitInputStream(delta.getParentFile(), delta.getName(), 1024 * 1024, patcher);
         } else if (useReverseDelta) {
             dd = makeReverseDelta(delta, reverseDelta);
         } else {
