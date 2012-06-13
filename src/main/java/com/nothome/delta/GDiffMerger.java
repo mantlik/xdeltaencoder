@@ -4,10 +4,6 @@
  */
 package com.nothome.delta;
 
-import com.nothome.delta.DiffWriter;
-import com.nothome.delta.GDiffPatcher;
-import com.nothome.delta.PatchException;
-import com.nothome.delta.SeekableSource;
 import static com.nothome.delta.GDiffWriter.*;
 import java.io.IOException;
 import java.io.InputStream;
@@ -26,7 +22,7 @@ public class GDiffMerger extends GDiffPatcher {
     /**
      * Interval between index entries in bytes
      */
-    public static int INDEX_INTERVAL = 1000;
+    private int index_interval = 200;
     private DiffWriter writer;
     private SeekableSource source;
     private ByteBuffer bb = ByteBuffer.allocate(1024);
@@ -60,44 +56,58 @@ public class GDiffMerger extends GDiffPatcher {
     }
 
     private void indexSource() {
-        long diffOffset;
-        long patchOffset = 0;
-        long lastIndex = -INDEX_INTERVAL - 1;
-        index.clear();
         try {
-            source.seek(0);
-            bb.clear();
-            int bytes = source.read(bb);
-            bb.flip();
-            if (bytes < 0) {
-                return;
-            }
-            // the magic string is 'd1 ff d1 ff' + the version number
-            if ((bb.get() & 0xff) != 0xd1
-                    || (bb.get() & 0xff) != 0xff
-                    || (bb.get() & 0xff) != 0xd1
-                    || (bb.get() & 0xff) != 0xff) {
+            boolean completed = false;
+            while (!completed) {
+                try {
+                    long diffOffset;
+                    long patchOffset = 0;
+                    index.clear();
+                    source.seek(0);
+                    bb.clear();
+                    int bytes = source.read(bb);
+                    bb.flip();
+                    if (bytes < 0) {
+                        return;
+                    }
+                    // the magic string is 'd1 ff d1 ff' + the version number
+                    if ((bb.get() & 0xff) != 0xd1
+                            || (bb.get() & 0xff) != 0xff
+                            || (bb.get() & 0xff) != 0xd1
+                            || (bb.get() & 0xff) != 0xff) {
 
-                throw new PatchException("magic string not found, aborting!");
-            }
-            int flag = (bb.get() & 0xff);
-            if (flag != 0x04) {
-                throw new PatchException("magic string not found, aborting!");
-            }
-            diffOffset = 5;
-            command = new Command();
-            while (!command.isEnd) {
-                command.readCommand(patchOffset, diffOffset);
-                if ((patchOffset - lastIndex) >= INDEX_INTERVAL) {
-                    index.put(patchOffset, diffOffset);
-                    lastIndex = patchOffset;
-                    int mb = (int) (diffOffset / 1024 / 1024);
-                    System.out.print("Indexing ... " + mb + " mb\r");
+                        throw new PatchException("magic string not found, aborting!");
+                    }
+                    int flag = (bb.get() & 0xff);
+                    if (flag != 0x04) {
+                        throw new PatchException("magic string not found, aborting!");
+                    }
+                    diffOffset = 5;
+                    int mb;
+                    long i = 0;
+                    command = new Command();
+                    while (!command.isEnd) {
+                        command.readCommand(patchOffset, diffOffset);
+                        if ((i % index_interval) == 0) {
+                            index.put(patchOffset, diffOffset);
+                            if ((i % (index_interval * 10)) == 0) {
+                                mb = (int) (diffOffset / 1024 / 1024);
+                                System.out.print("Indexing ... " + mb + " mb\r");
+                            }
+                        }
+                        patchOffset += command.patchLength;
+                        diffOffset += command.commandLength;
+                        i++;
+                    }
+                    completed = true;
+                } catch (OutOfMemoryError e) {
+                    index.clear();
+                    System.gc();
+                    index_interval *= 2;
+                    System.err.println("Out of memory. Changing index interval to " + index_interval + ".");
+                    continue;
                 }
-                patchOffset += command.patchLength;
-                diffOffset += command.commandLength;
             }
-
         } catch (IOException ex) {
             Logger.getLogger(GDiffMerger.class.getName()).log(Level.SEVERE, null, ex);
         }
@@ -160,7 +170,7 @@ public class GDiffMerger extends GDiffPatcher {
                 int dlen = 0;
                 while ((remaining > 0) && (startOffs < offset + length)) {
                     writer.addData(bb.get());
-                    dlen ++;
+                    dlen++;
                     startOffs++;
                     remaining--;
                     if (!bb.hasRemaining()) {

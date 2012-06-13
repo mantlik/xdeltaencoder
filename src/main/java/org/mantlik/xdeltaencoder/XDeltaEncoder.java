@@ -1015,7 +1015,7 @@ public class XDeltaEncoder {
         in.close();
         out.close();
         // merge source+reference to reverse
-        System.out.println("\rMerging first + reference to full delta");
+        System.out.println("\rMerging first + reference to full delta     ");
         File reverseFile = File.createTempFile("reverse-", ".delta", new File("."));
         reverseFile.deleteOnExit();
         try {
@@ -1035,7 +1035,7 @@ public class XDeltaEncoder {
             Logger.getLogger(XDeltaEncoder.class.getName()).log(Level.SEVERE, null, ex);
         }
         // create reverse delta from reference file and reverse file
-        System.out.println("\rComputing reverse delta " + reverseDelta);
+        System.out.println("\rComputing reverse delta      " + reverseDelta);
         source = referenceFile;
         target = reverseFile;
         delta = reverseDelta;
@@ -1077,7 +1077,7 @@ public class XDeltaEncoder {
             } else {
                 compareStream = new CompareOutputStream(target);
             }
-            tt = new BufferedOutputStream(compareStream, 100000);
+            tt = compareStream;
         } else {
             tt = new BufferedOutputStream(new FileOutputStream(target), 100000);
         }
@@ -1170,7 +1170,7 @@ public class XDeltaEncoder {
             System.out.println("Test source not supported for merge.\n");
             return;
         }
-        File diffTemp = new File("diff.tmp");
+        File diffTemp = File.createTempFile("diff-", ".tmp", new File("."));
         InputStream sis = new GZIPInputStream(new BufferedInputStream(new FileInputStream(source)));
         OutputStream sos = new BufferedOutputStream(new FileOutputStream(diffTemp));
         byte[] buf = new byte[10000];
