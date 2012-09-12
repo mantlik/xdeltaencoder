@@ -59,6 +59,7 @@ public class GDiffWriter implements DiffWriter {
     private boolean debug = false;
     private boolean skipHeaders = false;
     private boolean differential = false;
+    private boolean zeroAdditions = false;
     private long currentOffset = 0l;
     private long written = 0;
     private int data_max = DATA_MAX;
@@ -71,19 +72,22 @@ public class GDiffWriter implements DiffWriter {
 
     /**
      * Constructs a new GDiffWriter.
+     * @param os
+     * @throws IOException  
      */
     public GDiffWriter(DataOutputStream os) throws IOException {
-        this(os, false, false);
+        this(os, false, false, false);
     }
 
     public GDiffWriter(DataOutputStream os, boolean skipHeaders) throws IOException {
-        this(os, skipHeaders, false);
+        this(os, skipHeaders, false, false);
     }
 
-    public GDiffWriter(DataOutputStream os, boolean skipHeaders, boolean differential) throws IOException {
+    public GDiffWriter(DataOutputStream os, boolean skipHeaders, boolean differential, boolean zeroAdditions) throws IOException {
         this.differential = differential;
         this.output = os;
         this.skipHeaders = skipHeaders;
+        this.zeroAdditions = zeroAdditions;
         // write magic string "d1 ff d1 ff 04"
         if (!skipHeaders) {
             output.writeByte(0xd1);
@@ -195,7 +199,11 @@ public class GDiffWriter implements DiffWriter {
      */
     @Override
     public void addData(byte b) throws IOException {
-        buf.write(b);
+        if (zeroAdditions) {
+            buf.write(0);
+        } else {
+            buf.write(b);
+        }
         if (buf.size() >= CHUNK_SIZE) {
             writeBuf();
         }

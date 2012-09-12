@@ -89,6 +89,7 @@ public class XDeltaEncoder {
     private static boolean multiBuffer = false;
     private static File oldDeltaReference = null;
     private static CompareOutputStream compareStream;
+    private static boolean zeroAdditions = false;
 
     private static void encode(int blocksize) throws FileNotFoundException, IOException, SQLException, ClassNotFoundException {
         ByteBuffer sourcebuf = ByteBuffer.wrap(new byte[2 * blocksize]);
@@ -192,7 +193,7 @@ public class XDeltaEncoder {
         tStream = new BufferedInputStream(new FileInputStream(target));
         DiffWriter ddStream;
         if (source.length() < blocksize && (!preparation_pass)) {
-            ddStream = new GDiffWriter(new DataOutputStream(new GZIPOutputStream(new FileOutputStream(delta))), false, differential);
+            ddStream = new GDiffWriter(new DataOutputStream(new GZIPOutputStream(new FileOutputStream(delta))), false, differential, zeroAdditions);
         } else {
             ddStream = new VirtualWriter(new DataOutputStream(new BufferedOutputStream(new FileOutputStream(tempFile1))));
         }
@@ -255,7 +256,7 @@ public class XDeltaEncoder {
             sourcebuf.get(ss);
             SeekableSource sourceData = new ByteBufferSeekableSource(ss);
             if ((!preparation_pass) && (sourcepos + sourcesize) >= source.length()) {
-                ddStream = new GDiffWriter(new DataOutputStream(new GZIPOutputStream(new FileOutputStream(delta))), false, differential);
+                ddStream = new GDiffWriter(new DataOutputStream(new GZIPOutputStream(new FileOutputStream(delta))), false, differential, zeroAdditions);
             } else {
                 ddStream = new VirtualWriter(new DataOutputStream(new BufferedOutputStream(new FileOutputStream(tempFile2))));
             }
@@ -477,7 +478,7 @@ public class XDeltaEncoder {
             if (xdiff) {
                 ddStream = new XDiffWriter(new DataOutputStream(new GZIPOutputStream(new FileOutputStream(delta))));
             } else {
-                ddStream = new GDiffWriter(new DataOutputStream(new GZIPOutputStream(new FileOutputStream(delta))), false, differential);
+                ddStream = new GDiffWriter(new DataOutputStream(new GZIPOutputStream(new FileOutputStream(delta))), false, differential, zeroAdditions);
             }
         } else {
             ddStream = new VirtualWriter(new DataOutputStream(new BufferedOutputStream(new FileOutputStream(tempFile1), 1024 * 1024)));
@@ -640,7 +641,8 @@ public class XDeltaEncoder {
                 if (xdiff) {
                     ddStream = new XDiffWriter(new DataOutputStream(new GZIPOutputStream(new FileOutputStream(delta))));
                 } else {
-                    ddStream = new GDiffWriter(new DataOutputStream(new GZIPOutputStream(new FileOutputStream(delta))), false, differential);
+                    ddStream = new GDiffWriter(new DataOutputStream(new GZIPOutputStream(new FileOutputStream(delta)))
+                            , false, differential, zeroAdditions);
                 }
             } else {
                 ddStream = new VirtualWriter(new DataOutputStream(new BufferedOutputStream(new FileOutputStream(tempFile2))));
@@ -1285,6 +1287,9 @@ public class XDeltaEncoder {
                     + "             -mb          multi-buffer source - can be faster but needs more memory\n"
                     + "         -t               test the best block size (deprecated)\n"
                     + "         -p               preprocess using full file size (can be slow)\n"
+                    + "         -z               zero additions instead of copying dest blocks\n"
+                    + "                              decoded destination will contain copied source data,\n"
+                    + "                              the rest will be filled in with zeroes.\n"
                     + "         -f               read source block from file in memory\n"
                     + "                          slower but needs less memory\n"
                     + "         -s               single pass encoding (deprecated)\n"
@@ -1348,6 +1353,8 @@ public class XDeltaEncoder {
                 ignoreWarnings = true;
             } else if (args[arcbase].equalsIgnoreCase("-x")) {
                 xdiff = true;
+            } else if (args[arcbase].equalsIgnoreCase("-z")) {
+                zeroAdditions = true;
             } else if (args[arcbase].equalsIgnoreCase("-c")) {
                 arcbase++;
                 chunksize = Integer.decode(args[arcbase]);
