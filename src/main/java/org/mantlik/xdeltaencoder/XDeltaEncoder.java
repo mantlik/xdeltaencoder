@@ -22,6 +22,8 @@
 package org.mantlik.xdeltaencoder;
 
 import com.nothome.delta.*;
+import java.beans.XMLDecoder;
+import java.beans.XMLEncoder;
 import java.io.*;
 import java.nio.ByteBuffer;
 import java.sql.SQLException;
@@ -66,7 +68,7 @@ public class XDeltaEncoder {
     private static ByteBuffer targetbuf;
     private static long sumpass = 0;
     private static int maxticks = MAXTICKS;
-    private static boolean preparation_pass = false;
+    //private static boolean preparation_pass = false;
     private static boolean do_preparation_pass = false;
     private static boolean differential = false;
     private static boolean sourceInMemory = true;
@@ -169,180 +171,138 @@ public class XDeltaEncoder {
     }
 
     /*
-     * Multi-pass encoder using virtual writer temporary file
+     * Multi-pass encoder using virtual writer temporary file and blocks in
+     * files
      */
-    private static void encodeVirtual(int blocksize) throws FileNotFoundException, IOException {
-        File tempFile1 = new File("temp1.diff");
-        File tempFile2 = new File("temp2.diff");
-        File tempFile = new File("temp.data");
-        /*
-         * if (preparation_pass) { blocksize = blocksize *
-         * PREPARATION_BLOCK_FACTOR;
-         * processor.setChunkSize(processor.getChunkSize() *
-         * PREPARATION_CHUNK_FACTOR); }
-         */
-        ByteBuffer sourcebuf = ByteBuffer.wrap(new byte[blocksize]);
-        targetbuf = ByteBuffer.wrap(new byte[blocksize]);
-        long sourcepos = 0;
-        sStream = new RandomAccessFileSeekableSource(new RandomAccessFile(source, "r"));
-        sourcebuf.rewind();
-        int sourcesize = sStream.read(sourcebuf);
-        sourcebuf.rewind();
-        byte[] ss = new byte[sourcesize];
-        sourcebuf.get(ss, 0, sourcesize);
-        tStream = new BufferedInputStream(new FileInputStream(target));
-        DiffWriter ddStream;
-        if (source.length() < blocksize && (!preparation_pass)) {
-            ddStream = new GDiffWriter(new DataOutputStream(new GZIPOutputStream(new FileOutputStream(delta))), false, differential, zeroAdditions);
-        } else {
-            ddStream = new VirtualWriter(new DataOutputStream(new BufferedOutputStream(new FileOutputStream(tempFile1))));
+    private static void encodeVirtualFile(long blksize) throws FileNotFoundException, IOException, ClassNotFoundException {
+        Status status = new Status();
+        status.read();
+        if (status.pass == 0) {
+            status.tempFile1 = File.createTempFile("temp1-", ".vdiff", new File("."));
+            status.tempFile2 = File.createTempFile("temp2-", ".vdiff", new File("."));
+            status.tempFile3 = File.createTempFile("temp3-", ".vdiff", new File("."));
+            status.blocksize = blksize;
+            status.sourcepos = 0;
+            status.preparation_pass = do_preparation_pass && (sourceLength > blksize);
         }
+        ByteBuffer bb = null;
+        boolean origSourceInMemory = sourceInMemory;
+        if (status.preparation_pass) {
+            status.blocksize = sourceLength;
+            sourceInMemory = false;
+            processor.firstMatch = true;
+        }
+        //System.out.println("Blocksize = "+blocksize);
+        processor.clearSource();
+        processor.setKeepSource(false);
+        //processor.setChunkSize(chunksize);        
+        processor.found = 0;
+        SeekableSource asource = null;
+        SeekableSource bsource = null;
+
+        DiffWriter ddStream;
+        boolean interrupted = false;
         // first pass - making virtual file
-        System.out.println(" [" + sdf.format(new Date(System.currentTimeMillis())) + "]: Initial pass. This can take several minutes.");
+        if (status.pass == 0) {
+            System.out.println(" [" + sdf.format(new Date(System.currentTimeMillis())) + "]: Initial pass. This can take several minutes.");
+        } else {
+            System.out.println(" [" + sdf.format(new Date(System.currentTimeMillis())) + "]: Restarting processing from pass " + (status.pass + 1) + ".");
+            interrupted = true;
+        }
         processor.progress = true;
         boolean computed = false;
-        while (!computed) {
-            try {
-                processor.compute(new ByteBufferSeekableSource(ss), tStream, ddStream, 0, true);
-                computed = true;
-            } catch (OutOfMemoryError ex) {
-                chunksize = (int) ((1.1d * ss.length / processor.getCheksumPos()) * chunksize);
-                System.out.println("Not enough memory. Chunk size changed to " + chunksize + ".");
-                processor.setChunkSize(chunksize);
-            }
-        }
-        long totalLength;
-        if (ddStream.getClass().equals(VirtualWriter.class)) {
-            totalLength = ((VirtualWriter) ddStream).totalLength;
-        } else {
-            totalLength = ((GDiffWriter) ddStream).totalLength;
-        }
-        if (totalLength != target.length()) {
-            System.out.println("Target length mismatch.");
-            System.out.println("Total output length = " + totalLength + " target length = " + target.length());
-            return;
-        }
-        tStream.close();
-        processor.progress = false;
-        sourcepos += sourcesize;
-        // processing passes
-        int pass = 1;
-        long fits = 0;
-        long missed = 0;
-        long totmem = Runtime.getRuntime().maxMemory();
-        long curmem;
-        long availmem;
-        int freemem;
-        processor.setKeepSource(true);
-        while (preparation_pass || sourcepos < source.length()) {
-            if (preparation_pass) {
-                System.out.print("Preparation ");
-            }
-            availmem = Runtime.getRuntime().freeMemory();
-            curmem = Runtime.getRuntime().totalMemory();
-            freemem = (int) (100d * (availmem + totmem - curmem) / totmem);
-            System.out.println("Pass " + pass + " [" + sdf.format(new Date(System.currentTimeMillis())) + "]: " + df.format(100.0d * sourcepos / source.length())
-                    + " % done, found " + (fits + processor.found) / 1024 / 1024 + " mb " + freemem + " % free mem.");
-            System.gc();
-            processor.clearSource();
-            pass++;
-            fits = 0;
-            processor.found = 0;
-            sourcebuf.rewind();
-            sourcesize = sStream.read(sourcebuf);
-            sourcebuf.rewind();
-            tStream = new BufferedInputStream(new FileInputStream(target));
-            ss = new byte[sourcesize];
-            sourcebuf.get(ss);
-            SeekableSource sourceData = new ByteBufferSeekableSource(ss);
-            if ((!preparation_pass) && (sourcepos + sourcesize) >= source.length()) {
-                ddStream = new GDiffWriter(new DataOutputStream(new GZIPOutputStream(new FileOutputStream(delta))), false, differential, zeroAdditions);
+        if (status.pass == 0) {
+            status.sourcesize = 0;
+
+            if (!sourceInMemory) {
+                if (randomDataSource) {
+                    asource = new RandomDataSeekableSource(randomDataSeed, sourceLength);
+                } else if (status.preparation_pass || multiBuffer) {
+                    asource = new MultiBufferSeekableSource(new RandomAccessFile(source, "r"), 100 * 1024, 500);
+                } else {
+                    asource = new RandomAccessFileSeekableSource(new RandomAccessFile(source, "r"), 0, status.blocksize);
+                }
+                status.sourcesize = sourceLength;
             } else {
-                ddStream = new VirtualWriter(new DataOutputStream(new BufferedOutputStream(new FileOutputStream(tempFile2))));
-            }
-            DataInputStream vinp = new DataInputStream(new BufferedInputStream(new FileInputStream(tempFile1)));
-            byte op = vinp.readByte();
-            int j = 0;
-            int nextj = 1000 + j;
-            long done = 0;
-            while (op != 3) {
-                if (op == 1) {  // copy pass through
-                    long offs = vinp.readLong();
-                    int length = vinp.readInt();
-                    //System.out.println("Copy " + length + " bytes from " + offs);
-                    ddStream.addCopy(offs, length);
-                    int skipped = 0;
-                    while (skipped < length) {
-                        skipped += tStream.skip(length - skipped);
-                    }
-                    fits += length;
-                    done += length;
-                } else if (op == 2) {
-                    int len = vinp.readInt();
-                    done += len;
-                    if ((len < processor.getChunkSize())
-                            || /*
-                             * (preparation_pass && ((100.00d * processor.found
-                             * / blocksize > 90) || (1.0d * done > missed + 1.0d
-                             * * (pass + 1) * blocksize * target.length() /
-                             * source.length())))
-                             */ (preparation_pass && (len < (10 * processor.getChunkSize())))) {
-                        //System.out.println("Passthrough " + len + " bytes");
-                        for (int i = 0; i < len; i++) {
-                            ddStream.addData((byte) (tStream.read()));
+                while (bb == null) {
+                    try {
+                        if (bb == null) {
+                            bb = ByteBuffer.wrap(new byte[(int) status.blocksize]);
                         }
-                    } else {
-                        if (len > blocksize) { // copy to temp file
-                            //System.out.println("Analyze " + len + " bytes (tempfile)");
-                            OutputStream os = new BufferedOutputStream(new FileOutputStream(tempFile));
-                            int remaining = len;
-                            int datalen = 0;
-                            while (remaining > 0 && datalen >= 0) {
-                                targetbuf.rewind();
-                                datalen = tStream.read(targetbuf.array(), 0, Math.min(targetbuf.capacity(), remaining));
-                                if (datalen > 0) {
-                                    targetbuf.rewind();
-                                    byte[] tt = new byte[datalen];
-                                    targetbuf.get(tt);
-                                    os.write(tt);
-                                    remaining -= datalen;
+                        bb.clear();
+                        if (randomDataSource) {
+                            SeekableSource ss = new RandomDataSeekableSource(randomDataSeed, sourceLength);
+                            ss.seek(0);
+                            status.sourcesize = ss.read(bb);
+                        } else {
+                            RandomAccessFile raf = new RandomAccessFile(source, "r");
+                            raf.seek(0);
+                            status.sourcesize = 0;
+                            int i = 0;
+                            while ((i >= 0) && (status.sourcesize < status.blocksize)) {
+                                i = raf.read(bb.array(), (int) status.sourcesize, (int) (status.blocksize - status.sourcesize));
+                                if (i > 0) {
+                                    status.sourcesize += i;
                                 }
+                                //System.out.println("Reading source " + (sourcesize / 1024 / 1024) + " mb     \r");
                             }
-                            os.close();
-                            processor.compute(sourceData, new BufferedInputStream(new FileInputStream(tempFile)),
-                                    ddStream, sourcepos, false);
-                            j = nextj;
-                        } else {  // byte buffer
-                            //System.out.println("Analyze " + len + " bytes (buffer)");
-                            targetbuf.rewind();
-                            int datalen = tStream.read(targetbuf.array(), 0, Math.min(targetbuf.capacity(), len));
-                            targetbuf.rewind();
-                            byte[] tt = new byte[datalen];
-                            targetbuf.get(tt);
-                            processor.compute(sourceData, new ByteArrayInputStream(tt), ddStream, sourcepos, false);
+                            raf.close();
                         }
+                        bb.limit((int) status.sourcesize);
+                        bb.rewind();
+                        bsource = new ByteBufferSeekableSource(bb);
+                    } catch (OutOfMemoryError e) {
+                        bb = null;
+                        System.gc();
+                        status.blocksize -= status.blocksize / 4;
+                        try {
+                            Thread.sleep(1000);
+                        } catch (InterruptedException ex) {
+                        }
+                        System.out.println("Not enough memory. Block size changed to " + status.blocksize + ".");
                     }
-                }
-                op = vinp.readByte();
-                j++;
-                if (j >= nextj) {
-                    nextj += 1000;
-                    if (preparation_pass) {
-                        /*
-                         * if ((100.00d * processor.found / blocksize > 90) ||
-                         * (1.0d * done > missed + 1.0d * (pass + 1) * blocksize
-                         * * target.length() / source.length())) {
-                         * System.out.print("Preparation*"); } else {
-                         */
-                        System.out.print("Preparation ");
-                        //}
-                    }
-                    System.out.print("Pass " + pass + " progress: " + df.format(100.00 * done / target.length())
-                            + " %, so far fitted " + processor.found / 1024 / 1024 + " m\b\r");
                 }
             }
-            vinp.close();
-            ddStream.close();
+            if ((!status.preparation_pass) && (source.length() <= status.blocksize)) {
+                if (xdiff) {
+                    ddStream = new XDiffWriter(new DataOutputStream(new GZIPOutputStream(new FileOutputStream(delta))));
+                } else {
+                    ddStream = new GDiffWriter(new DataOutputStream(new GZIPOutputStream(new FileOutputStream(delta))), false, differential, zeroAdditions);
+                }
+            } else {
+                ddStream = new VirtualWriter(new DataOutputStream(new BufferedOutputStream(new FileOutputStream(status.tempFile1), 1024 * 1024)));
+            }
+            Runtime.getRuntime().gc();
+            long freeMemory = Runtime.getRuntime().maxMemory() - Runtime.getRuntime().freeMemory()
+                    + Runtime.getRuntime().totalMemory();
+            chunksize = Math.max((int) (status.blocksize * chunkFactor / freeMemory), CHUNKSIZE);
+
+            if (status.preparation_pass) {
+                chunksize = 5 * chunksize + 3000;
+                processor.acceptHash = true;
+                processor.duplicateChecksum = true;
+            }
+
+            processor.setChunkSize(chunksize);
+            System.out.println("Chunk size changed to " + chunksize + ".");
+            InputStream is = new BufferedInputStream(new FileInputStream(target), 1024 * 1024 * 32);
+            processor.targetsize = target.length();
+            while (!computed) {
+                try {
+                    if (sourceInMemory) {
+                        processor.compute(bsource, is, ddStream, 0, true);
+                    } else {
+                        processor.compute(asource, is, ddStream, 0, true);
+                    }
+                    computed = true;
+                } catch (OutOfMemoryError ex) {
+                    chunksize = 1 + (int) ((1.2d * status.sourcesize / processor.getCheksumPos()) * chunksize);
+                    chunkFactor = (int) (1.2d * chunkFactor * status.sourcesize / processor.getCheksumPos());
+                    System.out.println("Not enough memory. Chunk size changed to " + chunksize + ".");
+                    processor.setChunkSize(chunksize);
+                }
+            }
+            long totalLength;
             if (ddStream.getClass().equals(VirtualWriter.class)) {
                 totalLength = ((VirtualWriter) ddStream).totalLength;
             } else {
@@ -353,273 +313,115 @@ public class XDeltaEncoder {
                 System.out.println("Total output length = " + totalLength + " target length = " + target.length());
                 return;
             }
-            sourcepos += sourcesize;
-            File file = tempFile1;
-            tempFile1 = tempFile2;
-            tempFile2 = file;
-            if (preparation_pass && (sourcepos >= source.length())) {
-                // switch to normal pass
-                preparation_pass = false;
-                sourcepos = 0;
-                sStream.seek(0);
-                //blocksize = blocksize / PREPARATION_BLOCK_FACTOR;
-                //processor.setChunkSize(processor.getChunkSize() / PREPARATION_CHUNK_FACTOR);
-                //sourcebuf = ByteBuffer.wrap(new byte[blocksize]);
-                //targetbuf = ByteBuffer.wrap(new byte[blocksize]);
-            }
+            status.pass++;
+            status.sourcepos += status.sourcesize;
+            status.write();
         }
-        System.out.println("Pass " + pass + " [" + sdf.format(new Date(System.currentTimeMillis())) + "]: " + df.format(100.0d * sourcepos / source.length())
-                + " % done, found " + (fits + processor.found) / 1024 / 1024 + " mb.");
-        System.out.println("Offsets; long = " + ((GDiffWriter) ddStream).lo
-                + " medium = " + ((GDiffWriter) ddStream).io + " short = " + ((GDiffWriter) ddStream).so + " byte = " + ((GDiffWriter) ddStream).bo);
-        System.out.println("Final compression ratio: " + df.format(100.00d * delta.length() / target.length()) + " %");
-        missed = Math.max(blocksize * pass - fits - processor.found, 0);
-        if (tempFile1.exists()) {
-            tempFile1.delete();
-        }
-        if (tempFile2.exists()) {
-            tempFile2.delete();
-        }
-        if (tempFile.exists()) {
-            tempFile.delete();
-        }
+        bb = null;
+        asource = null;
+        bsource = null;
+        processor.progress = false;
+        // processing passes
+        process_passes(status, interrupted, blksize, origSourceInMemory);
     }
 
-    /*
-     * Multi-pass encoder using virtual writer temporary file and blocks in
-     * files
-     */
-    private static void encodeVirtualFile(long blocksize) throws FileNotFoundException, IOException {
-        File tempFile1 = File.createTempFile("temp1-", ".vdiff", new File("."));
-        File tempFile2 = File.createTempFile("temp2-", ".vdiff", new File("."));
-        File tempFile3 = null;
-        if (do_preparation_pass) {
-            tempFile3 = File.createTempFile("temp3-", ".vdiff", new File("."));
-            tempFile3.deleteOnExit();
-        }
-        tempFile1.deleteOnExit();
-        tempFile2.deleteOnExit();
-        ByteBuffer bb = null;
-        preparation_pass = do_preparation_pass && (sourceLength > blocksize);
-        boolean origSourceInMemory = sourceInMemory;
-        long origBlocksize = blocksize;
-        if (preparation_pass) {
-            blocksize = sourceLength;
-            sourceInMemory = false;
-            processor.firstMatch = true;
-        }
-        //System.out.println("Blocksize = "+blocksize);
-        processor.clearSource();
-        processor.setKeepSource(false);
-        //processor.setChunkSize(chunksize);        
-        processor.found = 0;
-        long sourcepos = 0;
-        SeekableSource asource = null;
-        SeekableSource bsource = null;
-        long filteredData;
-
-        DiffWriter ddStream;
-        // first pass - making virtual file
-        System.out.println(" [" + sdf.format(new Date(System.currentTimeMillis())) + "]: Initial pass. This can take several minutes.");
-        processor.progress = true;
-        boolean computed = false;
-        long sourcesize = 0;
-        if (!sourceInMemory) {
-            if (randomDataSource) {
-                asource = new RandomDataSeekableSource(randomDataSeed, sourceLength);
-            } else if (preparation_pass || multiBuffer) {
-                asource = new MultiBufferSeekableSource(new RandomAccessFile(source, "r"), 100 * 1024, 500);
-            } else {
-                asource = new RandomAccessFileSeekableSource(new RandomAccessFile(source, "r"), 0, blocksize);
-            }
-            sourcesize = sourceLength;
-        }
-        if (sourceInMemory) {
-            while (bb == null) {
-                try {
-                    if (bb == null) {
-                        bb = ByteBuffer.wrap(new byte[(int) blocksize]);
-                    }
-                    bb.clear();
-                    if (randomDataSource) {
-                        SeekableSource ss = new RandomDataSeekableSource(randomDataSeed, sourceLength);
-                        ss.seek(0);
-                        sourcesize = ss.read(bb);
-                    } else {
-                        RandomAccessFile raf = new RandomAccessFile(source, "r");
-                        raf.seek(0);
-                        sourcesize = 0;
-                        int i = 0;
-                        while ((i >= 0) && (sourcesize < blocksize)) {
-                            i = raf.read(bb.array(), (int) sourcesize, (int) (blocksize - sourcesize));
-                            if (i > 0) {
-                                sourcesize += i;
-                            }
-                            //System.out.println("Reading source " + (sourcesize / 1024 / 1024) + " mb     \r");
-                        }
-                        raf.close();
-                    }
-                    bb.limit((int) sourcesize);
-                    bb.rewind();
-                    bsource = new ByteBufferSeekableSource(bb);
-                } catch (OutOfMemoryError e) {
-                    bb = null;
-                    System.gc();
-                    blocksize -= blocksize / 4;
-                    try {
-                        Thread.sleep(1000);
-                    } catch (InterruptedException ex) {
-                    }
-                    System.out.println("Not enough memory. Block size changed to " + blocksize + ".");
-                }
-            }
-        }
-        if ((!preparation_pass) && (source.length() <= blocksize)) {
-            if (xdiff) {
-                ddStream = new XDiffWriter(new DataOutputStream(new GZIPOutputStream(new FileOutputStream(delta))));
-            } else {
-                ddStream = new GDiffWriter(new DataOutputStream(new GZIPOutputStream(new FileOutputStream(delta))), false, differential, zeroAdditions);
-            }
-        } else {
-            ddStream = new VirtualWriter(new DataOutputStream(new BufferedOutputStream(new FileOutputStream(tempFile1), 1024 * 1024)));
-            //if (preparation_pass) {
-            //    ((VirtualWriter) ddStream).filterFactor = 10 * chunksize;
-            //}
-        }
-        Runtime.getRuntime().gc();
-        long freeMemory = Runtime.getRuntime().maxMemory() - Runtime.getRuntime().freeMemory()
-                + Runtime.getRuntime().totalMemory();
-        chunksize = Math.max((int) (blocksize * chunkFactor / freeMemory), CHUNKSIZE);
-
-        if (preparation_pass) {
-            chunksize = 5 * chunksize + 3000;
-            processor.acceptHash = true;
-            processor.duplicateChecksum = true;
-        }
-
-        processor.setChunkSize(chunksize);
-        System.out.println("Chunk size changed to " + chunksize + ".");
-        InputStream is = new BufferedInputStream(new FileInputStream(target), 1024 * 1024 * 32);
-        processor.targetsize = target.length();
-        while (!computed) {
-            try {
-                if (sourceInMemory) {
-                    processor.compute(bsource, is, ddStream, 0, true);
-                } else {
-                    processor.compute(asource, is, ddStream, 0, true);
-                }
-                computed = true;
-            } catch (OutOfMemoryError ex) {
-                chunksize = 1 + (int) ((1.2d * sourcesize / processor.getCheksumPos()) * chunksize);
-                chunkFactor = (int) (1.2d * chunkFactor * sourcesize / processor.getCheksumPos());
-                System.out.println("Not enough memory. Chunk size changed to " + chunksize + ".");
-                processor.setChunkSize(chunksize);
-            }
-        }
-        long totalLength;
-        if (ddStream.getClass().equals(VirtualWriter.class)) {
-            totalLength = ((VirtualWriter) ddStream).totalLength;
-        } else {
-            totalLength = ((GDiffWriter) ddStream).totalLength;
-        }
-        if (totalLength != target.length()) {
-            System.out.println("Target length mismatch.");
-            System.out.println("Total output length = " + totalLength + " target length = " + target.length());
-            return;
-        }
-        processor.progress = false;
-        sourcepos += sourcesize;
-        // processing passes
-        int pass = 1;
+    private static void process_passes(Status status, boolean interrupted, long origBlocksize, boolean origSourceInMemory)
+            throws FileNotFoundException, IOException {
         long fits = 0;
-        long preparation_data = 0;
-        long missed = 0;
+        long preparation_data;
         long totmem = Runtime.getRuntime().maxMemory();
         long curmem;
         long availmem;
         int freemem;
-        boolean interrupted = false;
+        long filteredData, totalLength;
+        ByteBuffer bb = null;
+        SeekableSource asource = null, bsource = null;
+        DiffWriter ddStream = null;
         processor.setKeepSource(true);
         long lastdisptime = System.currentTimeMillis();
-        while (preparation_pass || sourcepos < source.length()) {
+        while (status.preparation_pass || status.sourcepos < source.length()) {
             filteredData = 0;
-            if (preparation_pass) {
+            if (status.preparation_pass) {
                 if (!interrupted) {
                     System.out.print("Preparation ");
                 }
-                filteredData = ((VirtualWriter) ddStream).filteredData;
+                if (ddStream != null) {
+                    filteredData = ((VirtualWriter) ddStream).filteredData;
+                }
             }
             LimitInputStream ttStream = new LimitInputStream(new BufferedInputStream(new FileInputStream(target)));
             availmem = Runtime.getRuntime().freeMemory();
             curmem = Runtime.getRuntime().totalMemory();
             freemem = (int) (100d * (availmem + totmem - curmem) / totmem);
             if (!interrupted) {
-                System.out.println("Pass " + pass + " [" + sdf.format(new Date(System.currentTimeMillis())) + "]: " + df.format(100.0d * sourcepos / source.length())
+                System.out.println("Pass " + status.pass + " [" + sdf.format(new Date(System.currentTimeMillis())) + "]: " + df.format(100.0d * status.sourcepos / source.length())
                         + " % done, found " + df.format((fits + processor.found - filteredData) / 1024d / 1024d) + " mb " + freemem + " % free mem.");
             }
             System.gc();
-            if (preparation_pass && (sourcepos >= source.length())) {
+            if (status.preparation_pass && (status.sourcepos >= source.length())) {
                 // switch to normal pass
-                preparation_pass = false;
+                status.preparation_pass = false;
                 processor.acceptHash = false;
                 processor.duplicateChecksum = false;
 
-                sourcepos = 0;
-                if (sourceInMemory) {
-                    bsource.seek(0);
-                } else {
-                    asource.seek(0);
-                }
+                status.sourcepos = 0;
+                /*if (sourceInMemory) {
+                 bsource.seek(0);
+                 } else {
+                 asource.seek(0);
+                 }*/
                 sourceInMemory = origSourceInMemory;
-                blocksize = origBlocksize;
+                status.blocksize = origBlocksize;
                 bsource = null;
                 asource = null;
                 bb = null;
                 System.gc();
                 chunkFactor = 10;
-                chunksize = Math.max((int) (blocksize * chunkFactor / freeMemory), CHUNKSIZE);
+                long freeMemory = Runtime.getRuntime().maxMemory() - Runtime.getRuntime().freeMemory()
+                        + Runtime.getRuntime().totalMemory();
+                chunksize = Math.max((int) (status.blocksize * chunkFactor / freeMemory), CHUNKSIZE);
                 processor.setChunkSize(chunksize);
                 System.out.println("Chunk size changed to " + chunksize + ".                                ");
             }
             processor.clearSource();
-            pass++;
+            status.pass++;
             fits = 0;
             preparation_data = 0;
             if (!sourceInMemory) {
                 if (randomDataSource) {
                     asource = new RandomDataSeekableSource(randomDataSeed, sourceLength);
                 } else {
-                    asource = new RandomAccessFileSeekableSource(new RandomAccessFile(source, "r"), 0, blocksize);
+                    asource = new RandomAccessFileSeekableSource(new RandomAccessFile(source, "r"), 0, status.blocksize);
                 }
-                sourcesize = sourceLength;
+                status.sourcesize = sourceLength;
             }
             boolean read = false;
             if (sourceInMemory) {
                 while (!read) {
                     try {
                         if (bb == null) {
-                            bb = ByteBuffer.wrap(new byte[(int) blocksize]);
+                            bb = ByteBuffer.wrap(new byte[(int) status.blocksize]);
                         }
                         bb.clear();
                         if (randomDataSource) {
                             SeekableSource ss = new RandomDataSeekableSource(randomDataSeed, sourceLength);
-                            ss.seek(sourcepos);
-                            sourcesize = ss.read(bb);
+                            ss.seek(status.sourcepos);
+                            status.sourcesize = ss.read(bb);
                         } else {
                             RandomAccessFile raf = new RandomAccessFile(source, "r");
-                            raf.seek(sourcepos);
-                            sourcesize = 0;
+                            raf.seek(status.sourcepos);
+                            status.sourcesize = 0;
                             int i = 0;
-                            while ((i >= 0) && (sourcesize < blocksize)) {
-                                i = raf.read(bb.array(), (int) sourcesize, (int) (blocksize - sourcesize));
+                            while ((i >= 0) && (status.sourcesize < status.blocksize)) {
+                                i = raf.read(bb.array(), (int) status.sourcesize, (int) (status.blocksize - status.sourcesize));
                                 if (i > 0) {
-                                    sourcesize += i;
+                                    status.sourcesize += i;
                                 }
                                 //System.out.println("Reading source " + (sourcesize / 1024 / 1024) + " mb     \r");
                             }
                             raf.close();
                         }
-                        bb.limit((int) sourcesize);
+                        bb.limit((int) status.sourcesize);
                         bb.rewind();
                         bsource = new ByteBufferSeekableSource(bb);
 
@@ -627,43 +429,42 @@ public class XDeltaEncoder {
                     } catch (OutOfMemoryError e) {
                         bb = null;
                         System.gc();
-                        blocksize -= blocksize / 4;
+                        status.blocksize -= status.blocksize / 4;
                         try {
                             Thread.sleep(1000);
                         } catch (InterruptedException ex) {
                         }
-                        System.out.println("Not enough memory. Block size changed to " + blocksize + ".");
+                        System.out.println("Not enough memory. Block size changed to " + status.blocksize + ".");
                     }
                 }
             }
             processor.found = 0;
-            if ((!preparation_pass) && (sourcepos + sourcesize) >= source.length()) {
+            if ((!status.preparation_pass) && (status.sourcepos + status.sourcesize) >= source.length()) {
                 if (xdiff) {
                     ddStream = new XDiffWriter(new DataOutputStream(new GZIPOutputStream(new FileOutputStream(delta))));
                 } else {
-                    ddStream = new GDiffWriter(new DataOutputStream(new GZIPOutputStream(new FileOutputStream(delta)))
-                            , false, differential, zeroAdditions);
+                    ddStream = new GDiffWriter(new DataOutputStream(new GZIPOutputStream(new FileOutputStream(delta))), false, differential, zeroAdditions);
                 }
             } else {
-                ddStream = new VirtualWriter(new DataOutputStream(new BufferedOutputStream(new FileOutputStream(tempFile2))));
+                ddStream = new VirtualWriter(new DataOutputStream(new BufferedOutputStream(new FileOutputStream(status.tempFile2))));
                 //if (preparation_pass) {
                 //    ((VirtualWriter) ddStream).filterFactor = 2 * chunksize;
                 //}
             }
-            DataInputStream vinp = new DataInputStream(new BufferedInputStream(new FileInputStream(tempFile1)));
+            DataInputStream vinp = new DataInputStream(new BufferedInputStream(new FileInputStream(status.tempFile1)));
             int length = 0;
             long offs = 0;
             int chs = processor.getChunkSize();
             if (do_preparation_pass) {
                 // disable found hashes for current block
                 System.out.print("Preprocessing block delta...                               \r");
-                DiffWriter ddStream2 = new VirtualWriter(new DataOutputStream(new BufferedOutputStream(new FileOutputStream(tempFile3))));
+                DiffWriter ddStream2 = new VirtualWriter(new DataOutputStream(new BufferedOutputStream(new FileOutputStream(status.tempFile3))));
                 byte op = vinp.readByte();
                 while (op != 3) {
                     if (op == 1) {  // copy pass through
                         offs = vinp.readLong();
                         length = vinp.readInt();
-                        if (do_preparation_pass && (offs >= sourcepos && offs < (sourcepos + sourcesize))) {
+                        if (do_preparation_pass && (offs >= status.sourcepos && offs < (status.sourcepos + status.sourcesize))) {
                             op = 4;
                         } else {
                             ddStream2.addCopy(offs, length);
@@ -685,7 +486,7 @@ public class XDeltaEncoder {
                 }
                 ddStream2.close();
                 vinp.close();
-                vinp = new DataInputStream(new BufferedInputStream(new FileInputStream(tempFile3)));
+                vinp = new DataInputStream(new BufferedInputStream(new FileInputStream(status.tempFile3)));
             }
             byte op = vinp.readByte();
             long done = 0;
@@ -715,21 +516,19 @@ public class XDeltaEncoder {
                         }
                     } else {
                         ttStream.setLimit(length);
-                        computed = false;
                         try {
                             if (sourceInMemory) {
-                                processor.compute(bsource, ttStream, ddStream, sourcepos, false);
+                                processor.compute(bsource, ttStream, ddStream, status.sourcepos, false);
                             } else {
-                                processor.compute(asource, ttStream, ddStream, sourcepos, false);
+                                processor.compute(asource, ttStream, ddStream, status.sourcepos, false);
                             }
-                            computed = true;
                         } catch (OutOfMemoryError ex) {
-                            chunksize = 1 + (int) ((1.2d * sourcesize / processor.getCheksumPos()) * chunksize);
-                            chunkFactor = (int) (1.2d * chunkFactor * sourcesize / processor.getCheksumPos());
+                            chunksize = 1 + (int) ((1.2d * status.sourcesize / processor.getCheksumPos()) * chunksize);
+                            chunkFactor = (int) (1.2d * chunkFactor * status.sourcesize / processor.getCheksumPos());
                             System.out.println("Not enough memory. Chunk size changed to " + chunksize + ".");
                             processor.setChunkSize(chunksize);
                             interrupted = true;
-                            pass--;
+                            status.pass--;
                         }
                         ttStream.setLimit(-1);
                     }
@@ -756,12 +555,12 @@ public class XDeltaEncoder {
                 if ((System.currentTimeMillis() - lastdisptime) > 1000) {
                     lastdisptime = System.currentTimeMillis();
                     filteredData = 0;
-                    if (preparation_pass) {
+                    if (status.preparation_pass) {
                         System.out.print("Preparation ");
                         filteredData = ((VirtualWriter) ddStream).filteredData;
                     }
-                    System.out.print("Pass " + pass + " progress: " + df.format(100.00 * done / target.length())
-                            + " %, so far fitted " + df.format((processor.found - preparation_data - filteredData) 
+                    System.out.print("Pass " + status.pass + " progress: " + df.format(100.00 * done / target.length())
+                            + " %, so far fitted " + df.format((processor.found - preparation_data - filteredData)
                             / 1024d / 1024d) + " mb\b\r");
                 }
             }
@@ -783,51 +582,42 @@ public class XDeltaEncoder {
                     System.out.println("Total output length = " + totalLength + " target length = " + target.length());
                     return;
                 }
-                sourcepos += sourcesize;
-                File file = tempFile1;
-                tempFile1 = tempFile2;
-                tempFile2 = file;
+                status.sourcepos += status.sourcesize;
+                File file = status.tempFile1;
+                status.tempFile1 = status.tempFile2;
+                status.tempFile2 = file;
             }
+            status.write();
         }
         System.out.println(
-                "Pass " + pass + " [" + sdf.format(new Date(System.currentTimeMillis())) + "]: " + df.format(100.0d * sourcepos / source.length())
+                "Pass " + status.pass + " [" + sdf.format(new Date(System.currentTimeMillis())) + "]: " + df.format(100.0d * status.sourcepos / source.length())
                 + " % done, found " + df.format((fits + processor.found) / 1024d / 1024d) + " mb.");
-        /*
-         * if (xdiff) { long addrlen = 0; for (int i = 0; i < ((XDiffWriter)
-         * ddStream).addrlen.length; i++) { addrlen += ((XDiffWriter)
-         * ddStream).addrlen[i]; } addrlen = addrlen / 1024 / 1024;
-         * System.out.println("Instructions = " + ((XDiffWriter)
-         * ddStream).instrLen / 1024 / 1024 + " mb data = " + ((XDiffWriter)
-         * ddStream).dataLen / 1024 / 1024 + " mb addresses = " + addrlen + "
-         * mb"); } else { System.out.println("Offsets; long = " + ((GDiffWriter)
-         * ddStream).lo + " medium = " + ((GDiffWriter) ddStream).io + " short =
-         * " + ((GDiffWriter) ddStream).so + " byte = " + ((GDiffWriter)
-         * ddStream).bo); }
-         */
 
         System.out.print("Delta file size: " + delta.length());
         System.out.println(
                 "   Final compression ratio: " + df.format(100.00d * delta.length() / target.length()) + " %");
-        missed = Math.max(blocksize * pass - fits - processor.found, 0);
-        //tStream.close();
 
-        if (tempFile1.exists()) {
-            tempFile1.delete();
+        if (status.tempFile1.exists()) {
+            status.tempFile1.delete();
         }
 
-        if (tempFile2.exists()) {
-            tempFile2.delete();
+        if (status.tempFile2.exists()) {
+            status.tempFile2.delete();
         }
 
-        if (do_preparation_pass && tempFile3.exists()) {
-            tempFile3.delete();
+        if (status.tempFile3.exists()) {
+            status.tempFile3.delete();
+        }
+        File statusFile = new File(status.statusFileName);
+        if (statusFile.exists()) {
+            statusFile.delete();
         }
     }
 
     /*
      * Test for optimal block size on sample of target file
      */
-    private static long testBlockSize() throws FileNotFoundException, IOException {
+    private static long testBlockSize() throws FileNotFoundException, IOException, ClassNotFoundException {
         final int MIN_CHANGE = 40 * 1024 * 1024;
         final int MIN_BLOCKSIZE = 128 * 1024 * 1024;
         final int MAX_BLOCKSIZE = 1024 * 1024 * 1024;
@@ -979,7 +769,7 @@ public class XDeltaEncoder {
         return blocksize;
     }
 
-    private static void createReverseDelta(long blocksize) throws IOException {
+    private static void createReverseDelta(long blocksize) throws IOException, FileNotFoundException, ClassNotFoundException {
         // unpack reference
         System.out.println("Unpacking reference delta " + target);
         InputStream in = new BufferedInputStream(new GZIPInputStream(new TargetInputStream(target, 1024 * 1024, null)));
@@ -1126,7 +916,6 @@ public class XDeltaEncoder {
         final PipedOutputStream reverseDeltaInput = new PipedOutputStream();
         final InputStream reverseDeltaOutput = new PipedInputStream(reverseDeltaInput);
         new Thread(new Runnable() {
-
             @Override
             public void run() {
                 try {
@@ -1256,6 +1045,52 @@ public class XDeltaEncoder {
         targetbuf.get(tt, 0, targetsize);
         byte[] dd = processor.compute(ss, tt);
         return dd.length;
+    }
+
+    private static class Status {
+
+        String statusFileName;
+        int pass;
+        long sourcepos;
+        long sourcesize;
+        long blocksize;
+        File tempFile1;
+        File tempFile2;
+        File tempFile3;
+        boolean preparation_pass;
+
+        Status() {
+            this.statusFileName = "." + delta + ".status";
+        }
+
+        void read() throws IOException, ClassNotFoundException {
+            if (!(new File(statusFileName).exists())) {
+                return;
+            }
+            XMLDecoder is = new XMLDecoder(new FileInputStream(statusFileName));
+            pass = (Integer) is.readObject();
+            sourcepos = (Long) is.readObject();
+            sourcesize = (Long) is.readObject();
+            blocksize = (Long) is.readObject();
+            preparation_pass = (Boolean) is.readObject();
+            tempFile1 = new File((String) is.readObject());
+            tempFile2 = new File((String) is.readObject());
+            tempFile3 = new File((String) is.readObject());
+            is.close();
+        }
+
+        void write() throws IOException {
+            XMLEncoder os = new XMLEncoder(new FileOutputStream(statusFileName));
+            os.writeObject(pass);
+            os.writeObject(sourcepos);
+            os.writeObject(sourcesize);
+            os.writeObject(blocksize);
+            os.writeObject(preparation_pass);
+            os.writeObject(tempFile1.getPath());
+            os.writeObject(tempFile2.getPath());
+            os.writeObject(tempFile3.getPath());
+            os.close();
+        }
     }
 
     /**
@@ -1482,6 +1317,8 @@ public class XDeltaEncoder {
              * null, ex);
              */
         } catch (FileNotFoundException ex) {
+            Logger.getLogger(XDeltaEncoder.class.getName()).log(Level.SEVERE, null, ex);
+        } catch (ClassNotFoundException ex) {
             Logger.getLogger(XDeltaEncoder.class.getName()).log(Level.SEVERE, null, ex);
         } catch (IOException ex) {
             if (!verify) {
