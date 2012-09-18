@@ -92,6 +92,8 @@ public class XDeltaEncoder {
     private static File oldDeltaReference = null;
     private static CompareOutputStream compareStream;
     private static boolean zeroAdditions = false;
+    private static int zeroMinBlock = -1;
+    private static double zeroRatio = GDiffWriter.DEFAULT_ZERO_RATIO;
 
     private static void encode(int blocksize) throws FileNotFoundException, IOException, SQLException, ClassNotFoundException {
         ByteBuffer sourcebuf = ByteBuffer.wrap(new byte[2 * blocksize]);
@@ -267,7 +269,8 @@ public class XDeltaEncoder {
                 if (xdiff) {
                     ddStream = new XDiffWriter(new DataOutputStream(new GZIPOutputStream(new FileOutputStream(delta))));
                 } else {
-                    ddStream = new GDiffWriter(new DataOutputStream(new GZIPOutputStream(new FileOutputStream(delta))), false, differential, zeroAdditions);
+                    ddStream = new GDiffWriter(new DataOutputStream(new GZIPOutputStream(new FileOutputStream(delta))), 
+                            false, differential, zeroAdditions, zeroMinBlock, zeroRatio);
                 }
             } else {
                 ddStream = new VirtualWriter(new DataOutputStream(new BufferedOutputStream(new FileOutputStream(status.tempFile1), 1024 * 1024)));
@@ -439,11 +442,14 @@ public class XDeltaEncoder {
                 }
             }
             processor.found = 0;
+            boolean lastPass = false;
             if ((!status.preparation_pass) && (status.sourcepos + status.sourcesize) >= source.length()) {
                 if (xdiff) {
                     ddStream = new XDiffWriter(new DataOutputStream(new GZIPOutputStream(new FileOutputStream(delta))));
                 } else {
-                    ddStream = new GDiffWriter(new DataOutputStream(new GZIPOutputStream(new FileOutputStream(delta))), false, differential, zeroAdditions);
+                    ddStream = new GDiffWriter(new DataOutputStream(new GZIPOutputStream(new FileOutputStream(delta))), 
+                            false, differential, zeroAdditions, zeroMinBlock, zeroRatio);
+                    lastPass = true;
                 }
             } else {
                 ddStream = new VirtualWriter(new DataOutputStream(new BufferedOutputStream(new FileOutputStream(status.tempFile2))));
@@ -559,9 +565,16 @@ public class XDeltaEncoder {
                         System.out.print("Preparation ");
                         filteredData = ((VirtualWriter) ddStream).filteredData;
                     }
-                    System.out.print("Pass " + status.pass + " progress: " + df.format(100.00 * done / target.length())
-                            + " %, so far fitted " + df.format((processor.found - preparation_data - filteredData)
-                            / 1024d / 1024d) + " mb\b\r");
+                    if (lastPass && zeroAdditions) {
+                        double ratio = 100d * ((GDiffWriter) ddStream).winRatio;
+                        System.out.print("Pass " + status.pass + " progress: " + df.format(100.00 * done / target.length())
+                                + " %, so far fitted " + df.format((processor.found - preparation_data - filteredData)
+                                / 1024d / 1024d) + " mb\b (WR = " + df.format(ratio) + "%)\r");
+                    } else {
+                        System.out.print("Pass " + status.pass + " progress: " + df.format(100.00 * done / target.length())
+                                + " %, so far fitted " + df.format((processor.found - preparation_data - filteredData)
+                                / 1024d / 1024d) + " mb\b\r");
+                    }
                 }
             }
 
@@ -1060,7 +1073,12 @@ public class XDeltaEncoder {
         boolean preparation_pass;
 
         Status() {
-            this.statusFileName = "." + delta + ".status";
+            String deltaname = delta.getName();
+            String deltapath = delta.getParent();
+            if (deltapath==null) {
+                deltapath = ".";
+            }
+            this.statusFileName = deltapath + "/" + "." + deltaname + ".status";
         }
 
         void read() throws IOException, ClassNotFoundException {
@@ -1125,6 +1143,11 @@ public class XDeltaEncoder {
                     + "         -z               zero additions instead of copying dest blocks\n"
                     + "                              decoded destination will contain copied source data,\n"
                     + "                              the rest will be filled in with zeroes.\n"
+                    + "             -zb bytes    zero continuous block of size bytes or more only - default 10\n"
+                    + "                              avoids breaking continuous blocks of data\n"
+                    + "                              due to negligible differences\n"
+                    + "             -zr percent  do not zero blocks when more than percent % data found\n"
+                    + "                              in sliding 1Mb window - default 90 %\n"
                     + "         -f               read source block from file in memory\n"
                     + "                          slower but needs less memory\n"
                     + "         -s               single pass encoding (deprecated)\n"
@@ -1197,6 +1220,17 @@ public class XDeltaEncoder {
                     chunksize = CHUNKSIZE;
                     System.out.println("Invalid chunk size. Used default value " + CHUNKSIZE);
                 }
+            } else if (args[arcbase].equalsIgnoreCase("-zb")) {
+                arcbase++;
+                zeroMinBlock = Integer.decode(args[arcbase]);
+                if (zeroMinBlock < 1) {
+                    zeroMinBlock = -1;
+                    System.out.println("Invalid minimum zeroes block size. Used default value " + 
+                            GDiffWriter.DEFAULT_ZERO_MIN_BLOCK +" bytes.");
+                }
+            } else if (args[arcbase].equalsIgnoreCase("-zr")) {
+                arcbase++;
+                zeroRatio = 1.0d * Integer.decode(args[arcbase]) / 100d;
             } else if (args[arcbase].equalsIgnoreCase("-b")) {
                 arcbase++;
                 String ch = args[arcbase];

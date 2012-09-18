@@ -55,6 +55,10 @@ public class GDiffWriter implements DiffWriter {
     public static final int COPY_INT_USHORT = 253; //0xfd
     public static final int COPY_INT_INT = 254;  //0xfe
     public static final int COPY_LONG_INT = 255; //0xff
+    public static final int DEFAULT_ZERO_MIN_BLOCK = 10;
+    public static final double DEFAULT_ZERO_RATIO = 0.9d;
+    
+    public static final int RATIO_WINDOW_SIZE = 1024*1024; // 1 Mbyte floating window
     private ByteArrayOutputStream buf = new ByteArrayOutputStream();
     private boolean debug = false;
     private boolean skipHeaders = false;
@@ -63,12 +67,15 @@ public class GDiffWriter implements DiffWriter {
     private long currentOffset = 0l;
     private long written = 0;
     private int data_max = DATA_MAX;
+    private int zeroMinBlock = DEFAULT_ZERO_MIN_BLOCK;
+    private double zeroRatio = DEFAULT_ZERO_RATIO;
     private DataOutputStream output = null;
     public long lo = 0;
     public long io = 0;
     public long so = 0;
     public long bo = 0;
     public long totalLength = 0;
+    public double winRatio = 0d;
 
     /**
      * Constructs a new GDiffWriter.
@@ -76,18 +83,27 @@ public class GDiffWriter implements DiffWriter {
      * @throws IOException  
      */
     public GDiffWriter(DataOutputStream os) throws IOException {
-        this(os, false, false, false);
+        this(os, false, false, false, -1, DEFAULT_ZERO_RATIO);
     }
 
     public GDiffWriter(DataOutputStream os, boolean skipHeaders) throws IOException {
-        this(os, skipHeaders, false, false);
+        this(os, skipHeaders, false, false, -1, DEFAULT_ZERO_RATIO);
     }
 
     public GDiffWriter(DataOutputStream os, boolean skipHeaders, boolean differential, boolean zeroAdditions) throws IOException {
+        this(os, skipHeaders, differential, zeroAdditions, -1, DEFAULT_ZERO_RATIO);
+    }
+    
+    public GDiffWriter(DataOutputStream os, boolean skipHeaders, boolean differential, boolean zeroAdditions, 
+            int zeroMinBlock, double zeroRatio) throws IOException {
         this.differential = differential;
         this.output = os;
         this.skipHeaders = skipHeaders;
         this.zeroAdditions = zeroAdditions;
+        this.zeroRatio = zeroRatio;
+        if (zeroMinBlock > 0) {  // otherwise use default
+            this.zeroMinBlock = zeroMinBlock;
+        }
         // write magic string "d1 ff d1 ff 04"
         if (!skipHeaders) {
             output.writeByte(0xd1);
@@ -106,6 +122,8 @@ public class GDiffWriter implements DiffWriter {
 
     /**
      * Constructs a new GDiffWriter.
+     * @param output
+     * @throws IOException  
      */
     public GDiffWriter(OutputStream output) throws IOException {
         this(new DataOutputStream(output));
@@ -118,7 +136,8 @@ public class GDiffWriter implements DiffWriter {
     @Override
     public void addCopy(long offset, int length) throws IOException {
         writeBuf();
-        //output debug data        
+        //output debug data     
+        winRatio = (winRatio * (RATIO_WINDOW_SIZE - Math.min(RATIO_WINDOW_SIZE, length)) + length) / RATIO_WINDOW_SIZE;
         if (debug) {
             System.err.println("COPY off: " + offset + ", len: " + length);
         }
@@ -196,14 +215,13 @@ public class GDiffWriter implements DiffWriter {
 
     /**
      * Adds a data byte.
+     * @param b
+     * @throws IOException  
      */
     @Override
     public void addData(byte b) throws IOException {
-        if (zeroAdditions) {
-            buf.write(0);
-        } else {
-            buf.write(b);
-        }
+        winRatio = winRatio * (RATIO_WINDOW_SIZE - 1) / RATIO_WINDOW_SIZE;
+        buf.write(b);
         if (buf.size() >= CHUNK_SIZE) {
             writeBuf();
         }
@@ -212,6 +230,13 @@ public class GDiffWriter implements DiffWriter {
 
     private void writeBuf() throws IOException {
         if (buf.size() > 0) {
+            if (zeroAdditions && (buf.size() >= this.zeroMinBlock) && (winRatio < zeroRatio)) {
+                int s = buf.size();
+                buf.reset();
+                for (int i=0; i<s; i++) {
+                    buf.write(0);
+                }
+            }
             if (buf.size() <= data_max) {
                 output.writeByte(buf.size());
                 written += buf.size() + 1;
@@ -231,7 +256,9 @@ public class GDiffWriter implements DiffWriter {
 
     /**
      * Flushes accumulated data bytes, if any.
+     * @throws IOException 
      */
+    @Override
     public void flush() throws IOException {
         writeBuf();
         output.flush();
@@ -240,6 +267,7 @@ public class GDiffWriter implements DiffWriter {
     /**
      * Writes the final EOF byte, closes the underlying stream.
      */
+    @Override
     public void close() throws IOException {
         this.flush();
         if (!skipHeaders) {
