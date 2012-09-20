@@ -24,6 +24,11 @@
     </developers>
     <url></url>
 
+    <scm>
+        <connection>scm:git:https://code.google.com/p/xdeltaencoder/</connection>
+        <developerConnection>scm:git:https://code.google.com/p/xdeltaencoder/</developerConnection>
+    </scm>
+
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
@@ -49,7 +54,7 @@
                     <descriptorRefs>
                         <descriptorRef>jar-with-dependencies</descriptorRef>
                     </descriptorRefs>
-                    <finalName>${project.artifactId}</finalName>
+                    <finalName>${project.artifactId}-${project.version}-build-${buildNumber}</finalName>
                     <appendAssemblyId>false</appendAssemblyId>
                     <archive>
                         <manifest>
@@ -120,32 +125,78 @@
                     </links>
                 </configuration>
             </plugin>
-                <plugin>
-                    <groupId>org.codehaus.mojo</groupId>
-                    <artifactId>license-maven-plugin</artifactId>
-                    <version>1.0</version>
-                    <configuration>
-                        <verbose>false</verbose>
-                        <addSvnKeyWords>false</addSvnKeyWords>
-                        <licenseName>gpl_v2</licenseName>
-                        <inceptionYear>2011</inceptionYear>
-                        <organizationName>Frantisek Mantlik &lt;frantisek at mantlik.cz&gt;</organizationName>
-                    </configuration>
-                    <executions>
-                        <execution>
-                            <id>first</id>
-                            <goals>
-                                <goal>update-file-header</goal>
-                            </goals>
-                            <phase>process-sources</phase>
-                            <configuration>
-                                <roots>
-                                    <root>src/main/java/org/mantlik</root>
-                                </roots>
-                            </configuration>
-                        </execution>
-                    </executions>
-                </plugin>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>license-maven-plugin</artifactId>
+                <version>1.0</version>
+                <configuration>
+                    <verbose>false</verbose>
+                    <addSvnKeyWords>false</addSvnKeyWords>
+                    <licenseName>gpl_v2</licenseName>
+                    <inceptionYear>2011</inceptionYear>
+                    <organizationName>Frantisek Mantlik &lt;frantisek at mantlik.cz&gt;</organizationName>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>first</id>
+                        <goals>
+                            <goal>update-file-header</goal>
+                        </goals>
+                        <phase>process-sources</phase>
+                        <configuration>
+                            <roots>
+                                <root>src/main/java/org/mantlik</root>
+                            </roots>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>buildnumber-maven-plugin</artifactId>
+                <version>1.1-PREVIEW</version>
+                <executions>
+                    <execution>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>create</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <doCheck>false</doCheck>
+                    <doUpdate>false</doUpdate>
+                    <useLastCommittedRevision>true</useLastCommittedRevision>
+                    <gitCountCommits>true</gitCountCommits>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>com.googlecode.maven-gcu-plugin</groupId>
+                <artifactId>maven-gcu-plugin</artifactId>
+                <version>1.1</version>
+                <executions>
+                    <execution>
+                        <phase>deploy</phase>
+                        <goals>
+                            <goal>upload</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <projectName>xdeltaencoder</projectName>
+                    <failsOnError>false</failsOnError>
+                    <serverId>code.google.com</serverId>
+                    <uploads>
+                        <upload>
+                            <file>${project.build.directory}/XDeltaEncoder-${project.version}-build-${buildNumber}.jar</file>
+                            <labels>
+                                <label>Featured</label>
+                            </labels>
+                            <summary>XDeltaEncoder ${project.version}</summary>
+                        </upload>
+                    </uploads>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
 
