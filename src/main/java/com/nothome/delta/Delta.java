@@ -73,6 +73,7 @@ public class Delta {
     private TargetState target;
     private DiffWriter output;
     private boolean keepSource = false;
+    private boolean autocode = false;
     private long done = 0;
     public long found = 0;
     public boolean progress = false;
@@ -94,7 +95,7 @@ public class Delta {
     }
 
     public long getCheksumPos() {
-        if (source==null) {
+        if (source == null) {
             return 0;
         }
         if (source.checksum == null) {
@@ -127,7 +128,7 @@ public class Delta {
             throws IOException {
         compute(new ByteBufferSeekableSource(source),
                 new ByteArrayInputStream(target),
-                new GDiffWriter(output), 0, true);
+                new GDiffWriter(output), 0, 0, true);
     }
 
     /**
@@ -146,7 +147,7 @@ public class Delta {
     public void compute(byte[] sourceBytes, InputStream inputStream,
             DiffWriter diffWriter) throws IOException {
         compute(new ByteBufferSeekableSource(sourceBytes),
-                inputStream, diffWriter, 0, true);
+                inputStream, diffWriter, 0, 0, true);
     }
 
     /**
@@ -159,7 +160,7 @@ public class Delta {
         RandomAccessFileSeekableSource asource = new RandomAccessFileSeekableSource(new RandomAccessFile(sourceFile, "r"));
         InputStream is = new BufferedInputStream(new FileInputStream(targetFile));
         try {
-            compute(asource, is, output, sourceOffset, closeOutput);
+            compute(asource, is, output, sourceOffset, 0, closeOutput);
         } finally {
             asource.close();
             is.close();
@@ -181,6 +182,16 @@ public class Delta {
         this.keepSource = keepSource;
     }
 
+    /**
+     * Source is the same as target.
+     * Ignore any forward matches.
+     *
+     * @param autocode
+     */
+    public void setAutocode(boolean autocode) {
+        this.autocode = autocode;
+    }
+
     public void clearSource() {
         source = null;
     }
@@ -191,8 +202,7 @@ public class Delta {
      * @param output will be closed
      */
     public void compute(SeekableSource seekSource, InputStream targetIS, DiffWriter output, long sourceOffset,
-            boolean closeOutput)
-            throws IOException {
+            long targetOffset, boolean closeOutput) throws IOException {
 
         if (debug) {
             debug("using match length S = " + S);
@@ -215,6 +225,7 @@ public class Delta {
 
         long loops = 0;
         long dupHashes = 0;
+        boolean autocodeFit;
         while (!target.eof()) {
             loops++;
             debug("!target.eof()");
@@ -224,18 +235,22 @@ public class Delta {
                     debug("found hash " + index);
                 }
                 long offset = ((long) index) * S;
-                int match;
-                if (acceptHash) {
+                autocodeFit = true;
+                if (autocode && (sourceOffset + offset) >= (done + targetOffset)) {
+                    autocodeFit = false;
+                }
+                int match = 0;
+                if (acceptHash && autocodeFit) {
                     match = S;
                     target.tbuf.position(target.tbuf.position() + match);
                     target.hashReset = true;
-                } else {
+                } else if (autocodeFit) {
                     source.seek(offset);
                     target.matched.clear();
                     match = target.longestMatch(source);
                 }
                 debug("best match " + match + " at index " + (offset / S));
-                if (match >= S) {
+                if ((match >= S) && autocodeFit) {
                     if (debug) {
                         debug("output.addCopy(" + offset + "," + match + ")");
                     }
@@ -250,7 +265,9 @@ public class Delta {
                      * "+tposition+" != "+(target.tbuf.position()-match)); }
                      */
                     try {
-                        target.tbuf.position(target.tbuf.position() - match);
+                        if (match > 0) {
+                            target.tbuf.position(target.tbuf.position() - match);
+                        }
                         target.hashReset = true;
                     } catch (IllegalArgumentException ex) {
                         System.err.println();

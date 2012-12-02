@@ -18,6 +18,8 @@
 package com.nothome.delta;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
@@ -42,19 +44,31 @@ public class MultiBufferSeekableSource implements SeekableSource {
     private RandomAccessFile source;
     private int bufferSize;
     private int noOfBuffers;
+    private int totalBuffers = 0;
     private Buffer currentBuf = null;
     private long currentPos = 0;
     private TreeMap<Long, Buffer> buffers = new TreeMap<Long, Buffer>();
     private ArrayList<Buffer> bufUsage = new ArrayList<Buffer>();
+    public final OutputStream outputStream = new SelfOutputStream();
+    public final InputStream inputStream = new SelfInputStream();
+    private long isPos = 0;
+    private ByteBuffer isbuf;
+    private ByteBuffer osbuf;
 
     public MultiBufferSeekableSource(RandomAccessFile source, int bufferSize, int noOfBuffers) {
         this.source = source;
         this.bufferSize = bufferSize;
         this.noOfBuffers = noOfBuffers;
+        isbuf = ByteBuffer.allocate(bufferSize);
+        isbuf.clear();
+        isbuf.limit(0);
+        osbuf = ByteBuffer.allocate(bufferSize);
+        osbuf.clear();
     }
 
     @Override
     public void seek(long pos) throws IOException {
+        clearos();
         Long p = null;
         if (!buffers.isEmpty()) {
             p = buffers.firstKey();
@@ -65,11 +79,12 @@ public class MultiBufferSeekableSource implements SeekableSource {
             p = buffers.higherKey(p);
         }
         if ((lp == null) || (lp > pos)) {
-            if (buffers.size() >= noOfBuffers) {
+            if (totalBuffers >= noOfBuffers) {
                 currentBuf = bufUsage.get(0);
                 buffers.remove(currentBuf.position);
             } else {
                 currentBuf = new Buffer(pos, ByteBuffer.allocate(bufferSize));
+                totalBuffers ++;
             }
             currentBuf.buffer.clear();
             currentBuf.buffer.limit(0);
@@ -97,6 +112,7 @@ public class MultiBufferSeekableSource implements SeekableSource {
 
     @Override
     public int read(ByteBuffer bb) throws IOException {
+        clearos();
         if (currentBuf == null) {
             return -1;
         }
@@ -132,8 +148,68 @@ public class MultiBufferSeekableSource implements SeekableSource {
 
     @Override
     public void close() throws IOException {
+        clearos();
         currentBuf = null;
         buffers.clear();
-        source.close();
+        //source.close();
+    }
+
+    public void close(boolean closeSource) throws IOException {
+        close();
+        if (closeSource) {
+            source.close();
+        }
+    }
+    // Input stream simulation
+
+    public void resetStream() {
+        isPos = 0;
+        isbuf.clear();
+        isbuf.limit(0);
+    }
+
+    public class SelfInputStream extends InputStream {
+
+        @Override
+        public int read() throws IOException {
+            if (!isbuf.hasRemaining()) {
+                isbuf.clear();
+                source.seek(isPos);
+                int len = source.read(isbuf.array());
+                if (len <= 0) {
+                    isbuf.limit(0);
+                    return -1;
+                }
+                isPos += len;
+                isbuf.position(0);
+                isbuf.limit(len);
+            }
+            return 0x00ff & isbuf.get();
+        }
+
+        @Override
+        public void close() throws IOException {
+            resetStream();
+        }
+        
+    }
+    
+    private void clearos() throws IOException {
+        if (osbuf.position() > 0) {
+            source.seek(source.length());
+            source.write(osbuf.array(), 0, osbuf.position());
+        }
+        osbuf.clear();
+    }
+
+    public class SelfOutputStream extends OutputStream {
+
+        @Override
+        public void write(int b) throws IOException {
+            if (! osbuf.hasRemaining()) {
+                clearos();
+            }
+            osbuf.put((byte)(b & 0x00ff));
+        }
     }
 }
