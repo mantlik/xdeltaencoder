@@ -60,7 +60,9 @@ public class Delta {
     /**
      * Default size of 16. For "Lorem ipsum" text files (see the tests) the
      * ideal size is about 14. Any smaller and the patch size becomes actually
-     * be larger. <p> Use a size like 64 or 128 for large files.
+     * be larger.
+     * <p>
+     * Use a size like 64 or 128 for large files.
      */
     public static final int DEFAULT_CHUNK_SIZE = 1 << 4;
     public static final int LONGEST_POSSIBLE_MATCH = Short.MAX_VALUE - 4;
@@ -80,7 +82,7 @@ public class Delta {
     public long targetsize = 0;
     public boolean firstMatch = false;
     public boolean acceptHash = false;
-    public boolean duplicateChecksum = false;
+    private boolean duplicateChecksum = false;
 
     /**
      * Constructs a new Delta. In the future, additional constructor arguments
@@ -118,7 +120,15 @@ public class Delta {
         if (size <= 0) {
             throw new IllegalArgumentException("Invalid size");
         }
-        S = size;
+        if (size != S) {
+            S = size;
+            if (source != null) {
+                source.checksum.clear();
+                if (source.checksum2 != null) {
+                    source.checksum2.clear();
+                }
+            }
+        }
     }
 
     /**
@@ -183,8 +193,7 @@ public class Delta {
     }
 
     /**
-     * Source is the same as target.
-     * Ignore any forward matches.
+     * Source is the same as target. Ignore any forward matches.
      *
      * @param autocode
      */
@@ -210,10 +219,9 @@ public class Delta {
 
         if ((source == null) || (!keepSource)) {
             source = new SourceState(seekSource);
-            source.checksum.init(seekSource, S);
-            if (duplicateChecksum) {
-                source.checksum2.init(seekSource, S);
-            }
+        }
+        if (source.checksum.isEmpty()) {
+            initChecksums(seekSource, S);
         }
         target = new TargetState(targetIS);
         this.output = output;
@@ -303,6 +311,33 @@ public class Delta {
         }
     }
 
+    private void initChecksums(SeekableSource ssource, int chunkSize) throws IOException {
+        ByteBuffer bb = ByteBuffer.allocate(chunkSize * 2);
+        int count = 0;
+        int count2 = 0;
+        int rep = 0;
+        source.checksum.spos = 0;
+        ssource.seek(0);
+        while (true) {
+            source.checksum.spos += ssource.read(bb);
+            bb.flip();
+            if (bb.remaining() < chunkSize) {
+                break;
+            }
+            count = source.checksum.compute(bb, chunkSize, count);
+            if (duplicateChecksum) {
+                bb.rewind();
+                count2 = source.checksum2.compute(bb, chunkSize, count2);
+            }
+            bb.compact();
+            rep++;
+            if (rep >= 5 + 10000000 / chunkSize) {
+                System.out.print("Computing hash table (" + source.checksum.spos / 1024 / 1024 + " mb)                                 \b\r");
+                rep = 0;
+            }
+        }
+    }
+
     private void addData() throws IOException {
         int i = target.read();
         if (debug) {
@@ -314,16 +349,23 @@ public class Delta {
         output.addData((byte) i);
     }
 
+    public boolean isDuplicateChecksum() {
+        return duplicateChecksum;
+    }
+
+    public void setDuplicateChecksum(boolean duplicateChecksum) {
+        if (duplicateChecksum != this.duplicateChecksum) {
+            this.duplicateChecksum = duplicateChecksum;
+        }
+    }
+
     class SourceState {
 
         private SeekableSource source;
-        private Checksum checksum, checksum2;
+        private final Checksum checksum = new Checksum(source, S);
+        private final Checksum checksum2 = new Checksum(source, S, System.currentTimeMillis());
 
         public SourceState(SeekableSource source) throws IOException {
-            checksum = new Checksum(source, S);
-            if (duplicateChecksum) {
-                checksum2 = new Checksum(source, S, System.currentTimeMillis());
-            }
             this.source = source;
             source.seek(0);
         }
@@ -399,7 +441,7 @@ public class Delta {
             if (index == -1) {
                 return index;
             }
-            if (duplicateChecksum) {
+            if (isDuplicateChecksum()) {
                 int index2 = source.checksum2.findChecksumIndex(hash2);
                 if (index2 != index) {
                     return -1;
@@ -429,7 +471,7 @@ public class Delta {
             if (tbuf.remaining() >= S) {
                 byte nchar = tbuf.get(tbuf.position() + S - 1);
                 hash = source.checksum.incrementChecksum(hash, b, nchar, S);
-                if (duplicateChecksum) {
+                if (isDuplicateChecksum()) {
                     hash2 = source.checksum2.incrementChecksum(hash2, b, nchar, S);
                 }
                 invalidHash = false;
@@ -444,7 +486,7 @@ public class Delta {
             if (tbuf.remaining() >= S) {
                 byte nchar = tbuf.get(tbuf.position() + S - 1);
                 hash = source.checksum.incrementChecksum(hash, b, nchar, S);
-                if (duplicateChecksum) {
+                if (isDuplicateChecksum()) {
                     hash2 = source.checksum2.incrementChecksum(hash2, b, nchar, S);
                 }
                 invalidHash = false;
@@ -530,7 +572,7 @@ public class Delta {
         void hash() {
             if (tbuf.remaining() >= S) {
                 hash = source.checksum.queryChecksum(tbuf, S);
-                if (duplicateChecksum) {
+                if (isDuplicateChecksum()) {
                     hash2 = source.checksum2.queryChecksum(tbuf, S);
                 }
                 invalidHash = false;
@@ -605,8 +647,8 @@ public class Delta {
         } else {
             sourceFile = new File(argv[0]);
             targetFile = new File(argv[1]);
-            output =
-                    new GDiffWriter(
+            output
+                    = new GDiffWriter(
                     new DataOutputStream(
                     new BufferedOutputStream(
                     new FileOutputStream(new File(argv[2])))));

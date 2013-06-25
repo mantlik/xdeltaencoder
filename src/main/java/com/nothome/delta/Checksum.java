@@ -98,7 +98,7 @@ public class Checksum {
         //System.out.println();
         //System.out.println("Generated "+checksums.size()+" hashes with "+repchecksums.size()+" duplicates.");
     }
-    
+
     public void init(SeekableSource source, int chunkSize) throws IOException {
         ByteBuffer bb = ByteBuffer.allocate(chunkSize * 2);
         //ByteBuffer cc = ByteBuffer.allocate(chunkSize * 2);
@@ -112,27 +112,32 @@ public class Checksum {
             if (bb.remaining() < chunkSize) {
                 break;
             }
-            TIntIntHashMap map;
-            while (bb.remaining() >= chunkSize) {
-                long queryChecksum = queryChecksum0(bb, chunkSize);
-                int chu = ((int) (queryChecksum >> 32) & 0xffffffff);
-                int chs = (int) (queryChecksum & 0xffffffff);
-                //long chs = queryChecksum;
-                if (!checksums.contains(chu)) {
-                    map = new TIntIntHashMap();
-                    checksums.put(chu, map);
-                } else {  // duplicate checksum
-                    map = checksums.get(chu);
-                }
-                map.put(chs, count++);
-            }
+            count = compute (bb, chunkSize, count);
             bb.compact();
             rep++;
             if (rep >= 5 + 10000000 / chunkSize) {
                 System.out.print("Computing hash table (" + spos / 1024 / 1024 + " mb)                                 \b\r");
                 rep = 0;
             }
-        }        
+        }
+    }
+
+    public int compute(ByteBuffer bb, int chunkSize, int count) {
+        TIntIntHashMap map;
+        while (bb.remaining() >= chunkSize) {
+            long queryChecksum = queryChecksum0(bb, chunkSize);
+            int chu = ((int) (queryChecksum >> 32) & 0xffffffff);
+            int chs = (int) (queryChecksum & 0xffffffff);
+            //long chs = queryChecksum;
+            if (!checksums.contains(chu)) {
+                map = new TIntIntHashMap();
+                checksums.put(chu, map);
+            } else {  // duplicate checksum
+                map = checksums.get(chu);
+            }
+            map.put(chs, count++);
+        }
+        return count;
     }
 
     /**
@@ -149,7 +154,7 @@ public class Checksum {
 
     /**
      * Create checksum, use default hashes
-     * 
+     *
      * @param source
      * @param chunkSize
      * @throws IOException
@@ -157,7 +162,7 @@ public class Checksum {
     public Checksum(SeekableSource source, int chunkSize) throws IOException {
         this(source, chunkSize, 0, false);
     }
-    
+
     /**
      * Finds the checksum computed from the buffer. Marks, gets, then resets the
      * buffer.
@@ -219,6 +224,14 @@ public class Checksum {
             return -1;
         }
         return map.get(chs);
+    }
+    
+    public boolean isEmpty() {
+        return checksums.isEmpty();
+    }
+    
+    public void clear() {
+        checksums.clear();
     }
 
     /**

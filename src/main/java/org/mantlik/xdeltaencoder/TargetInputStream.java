@@ -38,10 +38,12 @@ import java.text.DecimalFormat;
  */
 public class TargetInputStream extends FileInputStream {
 
+    private static final long REPORT_INTERVAL = 1000;
     long interval;
     long read;
     long totalread;
     long filesize;
+    long reportTime;
     GDiffPatcher patcher = null;
     private final static DecimalFormat df = new DecimalFormat("0.00");
     private final static DecimalFormat df0 = new DecimalFormat("0");

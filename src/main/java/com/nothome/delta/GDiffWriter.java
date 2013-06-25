@@ -38,6 +38,8 @@ public class GDiffWriter implements DiffWriter {
      * Max length of a chunk.
      */
     public static final int CHUNK_SIZE = Short.MAX_VALUE;
+    public static final int SKIP_HEADER = 1;
+    public static final int SKIP_EOF = 2;
     public static final byte EOF = 0;
     /**
      * Max length for single length data encode.
@@ -59,9 +61,9 @@ public class GDiffWriter implements DiffWriter {
     public static final double DEFAULT_ZERO_RATIO = 0.9d;
     
     public static final int RATIO_WINDOW_SIZE = 1024*1024; // 1 Mbyte floating window
-    private ByteArrayOutputStream buf = new ByteArrayOutputStream();
-    private boolean debug = false;
-    private boolean skipHeaders = false;
+    private final ByteArrayOutputStream buf = new ByteArrayOutputStream();
+    private final boolean debug = false;
+    private int skipHeaders = 0;
     private boolean differential = false;
     private boolean zeroAdditions = false;
     private long currentOffset = 0l;
@@ -83,18 +85,18 @@ public class GDiffWriter implements DiffWriter {
      * @throws IOException  
      */
     public GDiffWriter(DataOutputStream os) throws IOException {
-        this(os, false, false, false, -1, DEFAULT_ZERO_RATIO);
+        this(os, 0, false, false, -1, DEFAULT_ZERO_RATIO);
     }
 
-    public GDiffWriter(DataOutputStream os, boolean skipHeaders) throws IOException {
+    public GDiffWriter(DataOutputStream os, int skipHeaders) throws IOException {
         this(os, skipHeaders, false, false, -1, DEFAULT_ZERO_RATIO);
     }
 
-    public GDiffWriter(DataOutputStream os, boolean skipHeaders, boolean differential, boolean zeroAdditions) throws IOException {
+    public GDiffWriter(DataOutputStream os, int skipHeaders, boolean differential, boolean zeroAdditions) throws IOException {
         this(os, skipHeaders, differential, zeroAdditions, -1, DEFAULT_ZERO_RATIO);
     }
     
-    public GDiffWriter(DataOutputStream os, boolean skipHeaders, boolean differential, boolean zeroAdditions, 
+    public GDiffWriter(DataOutputStream os, int skipHeaders, boolean differential, boolean zeroAdditions, 
             int zeroMinBlock, double zeroRatio) throws IOException {
         this.differential = differential;
         this.output = os;
@@ -105,7 +107,7 @@ public class GDiffWriter implements DiffWriter {
             this.zeroMinBlock = zeroMinBlock;
         }
         // write magic string "d1 ff d1 ff 04"
-        if (!skipHeaders) {
+        if ((skipHeaders & SKIP_HEADER) == 0) {
             output.writeByte(0xd1);
             output.writeByte(0xff);
             output.writeByte(0xd1);
@@ -270,7 +272,7 @@ public class GDiffWriter implements DiffWriter {
     @Override
     public void close() throws IOException {
         this.flush();
-        if (!skipHeaders) {
+        if ((skipHeaders & SKIP_EOF) == 0) {
             output.write((byte) EOF);
             written ++;
         }

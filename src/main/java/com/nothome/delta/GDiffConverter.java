@@ -17,7 +17,7 @@ import java.io.OutputStream;
  */
 public class GDiffConverter extends GDiffPatcher {
     
-    private DiffWriter writer;
+    private final DiffWriter writer;
             
     public GDiffConverter (DiffWriter writer) {
         this.writer = writer;
