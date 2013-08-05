@@ -29,13 +29,14 @@ import gnu.trove.TIntArrayList;
 import gnu.trove.TIntIntHashMap;
 import gnu.trove.decorator.TIntIntHashMapDecorator;
 import java.io.IOException;
+import java.io.Serializable;
 import java.nio.ByteBuffer;
 import java.util.Random;
 
 /**
  * Checksum computation class.
  */
-public class Checksum {
+public class Checksum implements Serializable {
 
     static final boolean debug = false;
     private THashMap<Integer, TIntIntHashMap> checksums = new THashMap<Integer, TIntIntHashMap>();

@@ -93,6 +93,7 @@ public class XDeltaEncoder {
     private static int block_threshold = 0;
     private static boolean debugMode = false;
     private static SeekableSource debugSource = null;
+    private static String restoreChecksumFile = null;
 
     ;
 
@@ -280,6 +281,17 @@ public class XDeltaEncoder {
                             new GZIPOutputStream(new FileOutputStream(status.tempFile1), 1024 * 1024))));
                 }
                 preprocessor.targetsize = target.length();
+                boolean write_checksums = true;
+                if (! preprocessor.hasSource() && (restoreChecksumFile != null) && new File(restoreChecksumFile).exists()) {
+                    write_checksums = false;  // do not owerwrite existing checksums
+                    System.out.println("Reading checksums from " + restoreChecksumFile + ".");
+                    if (sourceInMemory) {
+                        preprocessor.readChecksums(restoreChecksumFile, bsource);
+                    } else {
+                        preprocessor.readChecksums(restoreChecksumFile, asource);
+                    }
+                    System.out.println("Chunksize set to " + preprocessor.getChunkSize() + " from " + restoreChecksumFile + ".");
+                }
                 while (!computed) {
                     try {
                         if (sourceInMemory) {
@@ -293,8 +305,13 @@ public class XDeltaEncoder {
                         chunksize = 1 + (int) ((1.2d * status.sourcesize / preprocessor.getCheksumPos()) * chunksize);
                         chunkFactor = (int) (1.2d * chunkFactor * status.sourcesize / preprocessor.getCheksumPos());
                         System.out.println("Not enough memory. Chunk size changed to " + chunksize + ".");
+                        preprocessor.setKeepSource(false);
                         preprocessor.setChunkSize(chunksize);
                     }
+                }
+                if ((status.targetpass == 0) && (restoreChecksumFile != null) && write_checksums) {
+                    System.out.println("Writing checksums to " + restoreChecksumFile + ".                   ");
+                    preprocessor.writeChecksums(restoreChecksumFile);
                 }
                 long totalLength;
                 if (ddStream.getClass().equals(VirtualWriter.class)) {
@@ -1292,6 +1309,8 @@ public class XDeltaEncoder {
                     + "                              source must be specified but is ignored"
                     + "         -m               merge two consecutive patches\n"
                     + "                             (does not check patch consistence)\n"
+                    + "         -cf filename     save/restore preprocessor checksums to/from a file\n"
+                    + "                             for later use with the same source (not checked!)\n"
                     + "         -d               decode using delta patch\n"
                     + "             -so              split output - useful when JVM can't handle big files\n"
                     + "             -mo              merge splitted output when finished (Linux only)\n"
@@ -1407,6 +1426,9 @@ public class XDeltaEncoder {
                 useReverseDelta = true;
                 arcbase++;
                 reverseDelta = new File(args[arcbase]);
+            } else if (args[arcbase].equalsIgnoreCase("-cf")) {
+                arcbase++;
+                restoreChecksumFile = args[arcbase];
             } else if (args[arcbase].equalsIgnoreCase("-dm")) {
                 debugMode = true;
             }

@@ -204,6 +204,10 @@ public class Delta {
     public void clearSource() {
         source = null;
     }
+    
+    public boolean hasSource() {
+        return source != null;
+    }
 
     /**
      * Compares the source with a target, writing to output.
@@ -337,6 +341,24 @@ public class Delta {
             }
         }
     }
+    
+    public void writeChecksums(String filename) throws FileNotFoundException, IOException {
+        ObjectOutputStream os = new ObjectOutputStream(new BufferedOutputStream(new FileOutputStream(filename)));
+        os.writeInt(S);
+        os.writeObject(source.checksum);
+        os.writeObject(source.checksum2);
+        os.close();
+    }
+    
+    public void readChecksums(String filename, SeekableSource seekSource) throws IOException, ClassNotFoundException {
+        ObjectInputStream is = new ObjectInputStream(new BufferedInputStream(new FileInputStream(filename)));
+        source = new SourceState(seekSource);
+        setKeepSource(true);
+        setChunkSize(is.readInt());
+        source.checksum = (Checksum) is.readObject();
+        source.checksum2 = (Checksum) is.readObject();
+        is.close();
+    }
 
     private void addData() throws IOException {
         int i = target.read();
@@ -362,8 +384,8 @@ public class Delta {
     class SourceState {
 
         private SeekableSource source;
-        private final Checksum checksum = new Checksum(source, S);
-        private final Checksum checksum2 = new Checksum(source, S, System.currentTimeMillis());
+        private Checksum checksum = new Checksum(source, S);
+        private Checksum checksum2 = new Checksum(source, S, System.currentTimeMillis());
 
         public SourceState(SeekableSource source) throws IOException {
             this.source = source;
