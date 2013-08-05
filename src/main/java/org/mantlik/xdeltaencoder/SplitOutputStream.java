@@ -53,7 +53,7 @@ public class SplitOutputStream extends OutputStream {
     @Override
     public void write(int b) throws IOException {
         if (os == null) {
-            os = new BufferedOutputStream(new FileOutputStream(new File(dir, prefix + "." + df.format(fileno))), 100000);
+            os = new BufferedOutputStream(new FileOutputStream(new File(dir, prefix + "." + df.format(fileno))), 1000000);
         }
         os.write(b);
         written++;

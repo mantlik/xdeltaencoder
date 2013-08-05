@@ -992,7 +992,7 @@ public class XDeltaEncoder {
         }
         if (!reverseDeltaOnly) {
             if (multiFileDecode) {
-                File dir = source.getParentFile();
+                File dir = source.getCanonicalFile().getParentFile();
                 String prefix = source.getName();
                 ss = new MultifileSeekableSource(dir, prefix);
             } else if (randomDataSource) {
@@ -1005,7 +1005,7 @@ public class XDeltaEncoder {
         }
         InputStream dd;
         if (splittedDelta) {
-            dd = new SplitInputStream(delta.getParentFile(), delta.getName(), 1024 * 1024, patcher);
+            dd = new SplitInputStream(delta.getCanonicalFile().getParentFile(), delta.getName(), 1024 * 1024, patcher);
         } else if (useReverseDelta) {
             dd = makeReverseDelta(delta, reverseDelta);
         } else {
@@ -1249,7 +1249,7 @@ public class XDeltaEncoder {
         if (args.length < 3) {
             System.out.println("XDeltaEncoder version "
                     + Package.getPackage("org.mantlik.xdeltaencoder").getImplementationVersion()
-                    + " (C) RNDr. Frantisek Mantlik, 2011-2012\n"
+                    + " (C) RNDr. Frantisek Mantlik, 2011-2013\n"
                     + "Usage:\njava -Xmx2048m -jar XDeltaEncoder.jar [options] source target delta\n"
                     + "                            encode target from source, produce delta"
                     + "java -jar XDeltaEncoder.jar -d [options] source delta target\n"
