@@ -367,7 +367,7 @@ public class XDeltaEncoder {
     private static void process_passes(Status status, boolean interrupted, long origBlocksize, boolean origSourceInMemory)
             throws FileNotFoundException, IOException {
         long fits = 0;
-        long preparation_data;
+        long preparation_data = 0;
         long totmem = Runtime.getRuntime().maxMemory();
         long curmem;
         long availmem;
@@ -412,7 +412,9 @@ public class XDeltaEncoder {
                                 "Pass " + status.targetpass + "." + status.pass + " [" + sdf.format(new Date(System.currentTimeMillis())) + "]: "
                                 + df.format(100.0d * ((1d * status.targetpos) / target.length()
                                 + (1d * status.sourcepos) / sourceLength * targetBuffer.limit() / target.length()))
-                                + " % done, found " + df.format((totalfounds + fits + found) / 1024d / 1024d) + " mb.");
+                                + " % done, preprocessed " + df.format((preparation_data) / 1024d / 1024d)
+                                + " mb, found " + df.format((found) / 1024d / 1024d) 
+                                + " mb, in total " + df.format((totalfounds + fits + found) / 1024d / 1024d) + " mb.");
                     }
                 } else {
                     System.out.println("Pass " + status.pass + " [" + sdf.format(new Date(System.currentTimeMillis())) + "]: "
@@ -493,7 +495,7 @@ public class XDeltaEncoder {
                 ddStream2.close();
                 vinp.close();
                 // Skip blocks with low ratio
-                if (preparation_data < block_threshold) {
+                if ((preparation_data < block_threshold) && (preparation_data < (preprocessor.found / 10d))) {
                     ttStream.close();
                     status.sourcepos += status.sourcesize;
                     under_threshold = true;
