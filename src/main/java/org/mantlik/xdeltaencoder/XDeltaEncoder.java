@@ -282,7 +282,7 @@ public class XDeltaEncoder {
                 }
                 preprocessor.targetsize = target.length();
                 boolean write_checksums = true;
-                if (! preprocessor.hasSource() && (restoreChecksumFile != null) && new File(restoreChecksumFile).exists()) {
+                if (!preprocessor.hasSource() && (restoreChecksumFile != null) && new File(restoreChecksumFile).exists()) {
                     write_checksums = false;  // do not owerwrite existing checksums
                     System.out.println("Reading checksums from " + restoreChecksumFile + ".");
                     if (sourceInMemory) {
@@ -373,6 +373,9 @@ public class XDeltaEncoder {
         long availmem;
         int freemem;
         long filteredData, totalLength, found;
+        long[] blocks_map = null;
+        long blocks_map_blocksize = -1;
+        long blocks_map_start = 0;
         boolean under_threshold = false;
         ByteBuffer bb = null;
         SeekableSource asource = null, bsource = null;
@@ -411,9 +414,9 @@ public class XDeltaEncoder {
                         System.out.println(
                                 "Pass " + status.targetpass + "." + status.pass + " [" + sdf.format(new Date(System.currentTimeMillis())) + "]: "
                                 + df.format(100.0d * ((1d * status.targetpos) / target.length()
-                                + (1d * status.sourcepos) / sourceLength * targetBuffer.limit() / target.length()))
+                                        + (1d * status.sourcepos) / sourceLength * targetBuffer.limit() / target.length()))
                                 + " % done, preprocessed " + df.format((preparation_data) / 1024d / 1024d)
-                                + " mb, found " + df.format((found) / 1024d / 1024d) 
+                                + " mb, found " + df.format((found) / 1024d / 1024d)
                                 + " mb, in total " + df.format((totalfounds + fits + found) / 1024d / 1024d) + " mb.");
                     }
                 } else {
@@ -453,19 +456,66 @@ public class XDeltaEncoder {
             mainprocessor.found = 0;
             preparation_data = 0;
             DataInputStream vinp = new DataInputStream(new GZIPInputStream(
-                    new BufferedInputStream(new FileInputStream(status.tempFile1))));
+                    new BufferedInputStream(new FileInputStream(status.tempFile1)), 1024 * 1024));
             int length = 0;
             long offs = 0;
             int chs = mainprocessor.getChunkSize();
             if (do_preparation_pass) {
                 // disable found hashes for current block
                 status.sourcesize = status.blocksize;
+                if (status.sourcesize != blocks_map_blocksize) {
+                    blocks_map_start = status.sourcepos;
+                    blocks_map_blocksize = status.sourcesize;
+                    int no_of_blocks = (int) Math.ceil((0d + sourceLength - blocks_map_start) / blocks_map_blocksize);
+                    blocks_map = new long[no_of_blocks + 1];
+                    byte op = vinp.readByte();
+                    while (op != 3) {
+                        if (op == 1) {
+                            offs = vinp.readLong();
+                            length = vinp.readInt();
+                            // process found block
+                            int start_block = (int) Math.floor((0d + offs - blocks_map_start) / blocks_map_blocksize);
+                            int end_block = (int) Math.floor((0d + offs - blocks_map_start + length - 1) / blocks_map_blocksize);
+                            for (int i = start_block; i <= end_block; i++) {
+                                long start_in_block = Math.max(blocks_map_start + i * blocks_map_blocksize, offs);
+                                long end_in_block = Math.min(blocks_map_start + (i + 1) * blocks_map_blocksize - 1, offs + length - 1);
+                                if ((i >= 0) && (i < blocks_map.length)) {
+                                    blocks_map[i] += end_in_block - start_in_block;
+                                }
+                            }
+                        }
+                        if (op == 2) {
+                            length = vinp.readInt(); // ignore
+                        }
+                        op = vinp.readByte();
+                    }
+                    System.out.print("Passes to process: ");
+                    for (int i = 0; i < blocks_map.length; i++) {
+                        if ((blocks_map[i] < block_threshold) && (blocks_map[i] <= (preprocessor.found / 10d))) {
+                            continue;
+                        }
+                        System.out.print(" " + (status.pass + i));
+                    }
+                    System.out.println();
+                    vinp.close();
+                    vinp = new DataInputStream(new GZIPInputStream(
+                            new BufferedInputStream(new FileInputStream(status.tempFile1)), 1024 * 1024));
+                }
+                int block = (int) Math.floor((0d + status.sourcepos - blocks_map_start) / blocks_map_blocksize);
+                if ((blocks_map[block] < block_threshold) && (blocks_map[block] <= (preprocessor.found / 10d))) {
+                    vinp.close();
+                    ttStream.close();
+                    status.sourcepos += status.sourcesize;
+                    under_threshold = true;
+                    continue;
+                }
                 if (status.targetblocksize > 0) {
                     System.out.print("Pass " + status.targetpass + "." + status.pass + " Preprocessing block delta...                     \r");
                 } else {
                     System.out.print("Pass " + status.pass + " Preprocessing block delta...                     \r");
                 }
-                DiffWriter ddStream2 = new VirtualWriter(new DataOutputStream(new BufferedOutputStream(new GZIPOutputStream(new FileOutputStream(status.tempFile3)))));
+                DiffWriter ddStream2 = new VirtualWriter(new DataOutputStream(
+                        new BufferedOutputStream(new GZIPOutputStream(new FileOutputStream(status.tempFile3)), 10000000)));
                 byte op = vinp.readByte();
                 while (op != 3) {
                     if (op == 1) {  // copy pass through
@@ -495,13 +545,14 @@ public class XDeltaEncoder {
                 ddStream2.close();
                 vinp.close();
                 // Skip blocks with low ratio
-                if ((preparation_data < block_threshold) && (preparation_data < (preprocessor.found / 10d))) {
+                if ((preparation_data < block_threshold) && (preparation_data <= (preprocessor.found / 10d))) {
                     ttStream.close();
                     status.sourcepos += status.sourcesize;
                     under_threshold = true;
                     continue;
                 }
-                vinp = new DataInputStream(new GZIPInputStream(new BufferedInputStream(new FileInputStream(status.tempFile3))));
+                vinp = new DataInputStream(new GZIPInputStream(
+                        new BufferedInputStream(new FileInputStream(status.tempFile3)), 1024 * 1024));
             }
             mainprocessor.clearSource();
             if (!sourceInMemory) {
@@ -649,11 +700,11 @@ public class XDeltaEncoder {
                         System.out.print("Pass " + status.targetpass + "." + status.pass + " progress: "
                                 + df.format(100.00 * done / (targetBuffer.position() + targetBuffer.remaining()))
                                 + " %, so far fitted " + df.format((mainprocessor.found - preparation_data - filteredData)
-                                / 1024d / 1024d) + " mb      \b\r");
+                                        / 1024d / 1024d) + " mb      \b\r");
                     } else {
                         System.out.print("Pass " + status.pass + " progress: " + df.format(100.00 * done / target.length())
                                 + " %, so far fitted " + df.format((mainprocessor.found - preparation_data - filteredData)
-                                / 1024d / 1024d) + " mb      \b\r");
+                                        / 1024d / 1024d) + " mb      \b\r");
                     }
                 }
             }
@@ -691,7 +742,7 @@ public class XDeltaEncoder {
                 System.out.println(
                         "Pass " + status.targetpass + "." + status.pass + " [" + sdf.format(new Date(System.currentTimeMillis())) + "]: "
                         + df.format(100.0d * (1d * status.targetpos / target.length()
-                        + (1d * status.sourcepos) / sourceLength * targetBuffer.limit() / target.length()))
+                                + (1d * status.sourcepos) / sourceLength * targetBuffer.limit() / target.length()))
                         + " % done, found " + df.format((totalfounds + fits + mainprocessor.found) / 1024d / 1024d) + " mb.");
             }
         } else {
@@ -1068,11 +1119,11 @@ public class XDeltaEncoder {
             os.close();
         } else {
             try {
-                tt = new BufferedOutputStream(tt, 100000);
+                tt = new BufferedOutputStream(tt, 1000000);
                 patcher.patch(ss, dd, tt);
             } catch (PatchException ex) {
                 dd.close();
-                dd = new GZIPInputStream(new BufferedInputStream(new TargetInputStream(delta, 1024 * 1024, null)), 100000);
+                dd = new GZIPInputStream(new BufferedInputStream(new TargetInputStream(delta, 1024 * 1024, null)), 1024 * 1024);
                 xpatcher.patch(ss, dd, tt);
             }
         }
@@ -1270,13 +1321,13 @@ public class XDeltaEncoder {
                     + Package.getPackage("org.mantlik.xdeltaencoder").getImplementationVersion()
                     + " (C) RNDr. Frantisek Mantlik, 2011-2013\n"
                     + "Usage:\njava -Xmx2048m -jar XDeltaEncoder.jar [options] source target delta\n"
-                    + "                            encode target from source, produce delta"
+                    + "                            encode target from source, produce delta\n"
                     + "java -jar XDeltaEncoder.jar -d [options] source delta target\n"
-                    + "                            decode source using delta, produce target"
+                    + "                            decode source using delta, produce target\n"
                     + "java -jar XDeltaEncoder.jar -v [options] source delta target\n"
-                    + "                            verify delta simulating decoding source to target"
+                    + "                            verify delta simulating decoding source to target\n"
                     + "java -jar XDeltaEncoder.jar -m [options] first second merged\n"
-                    + "                            merge first and second delta, produce merged"
+                    + "                            merge first and second delta, produce merged\n"
                     + "Options: -c chunksize     minimum chunk size in bytes - default 5\n"
                     + "         -b blocksize     block size processed in 1 pass in bytes - default 128m\n"
                     + "         -tb blocksize    target block size - split target and process in memory\n"
@@ -1295,7 +1346,7 @@ public class XDeltaEncoder {
                     + "         -v               verify patch against target\n"
                     + "             -mb          multi-buffer source - can be faster but needs more memory\n"
                     + "         -t               test the best block size (deprecated)\n"
-                    + "         -p               preprocess using full file size (suitable for large files"
+                    + "         -p               preprocess using full file size (suitable for large files\n"
                     + "                               with significant amount of identical blocks)\n"
                     + "         -z               zero additions instead of copying dest blocks\n"
                     + "                              decoded destination will contain copied source data,\n"
@@ -1307,8 +1358,8 @@ public class XDeltaEncoder {
                     + "                              in sliding 1Mb window - default 90 %\n"
                     + "         -f               read source block from file in memory\n"
                     + "                              slower but needs less memory\n"
-                    + "         -a               auto encode/decode, i.e. ignore source and use target only"
-                    + "                              source must be specified but is ignored"
+                    + "         -a               auto encode/decode, i.e. ignore source and use target only\n"
+                    + "                              source must be specified but is ignored\n"
                     + "         -m               merge two consecutive patches\n"
                     + "                             (does not check patch consistence)\n"
                     + "         -cf filename     save/restore preprocessor checksums to/from a file\n"
@@ -1318,7 +1369,7 @@ public class XDeltaEncoder {
                     + "             -mo              merge splitted output when finished (Linux only)\n"
                     + "             -jd              join delta from splitted parts - delta means delta prefix\n"
                     + "             -ng              delta is not gzipped\n"
-                    + "             -g               join source from splitted parts - source means source prefix");
+                    + "             -g               join source from splitted parts - source means source prefix\n");
             System.exit(99);
         }
         int arcbase = 0;
