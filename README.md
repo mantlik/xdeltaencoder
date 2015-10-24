@@ -10,19 +10,19 @@ Usage
 =====
 Create delta from source and target
 
-java -Xmx2048m -jar XDeltaEncoder.jar [options] source target delta
+         java -Xmx2048m -jar XDeltaEncoder.jar [options] source target delta
 
 When source is very large - several Gb, use e.g.:
 
-java -Xmx1500m -jar XDeltaEncoder.jar -p -b 500m -tb 500m -bt 5m -c 20 source target delta
+         java -Xmx1500m -jar XDeltaEncoder.jar -p -b 500m -tb 500m -bt 5m -c 20 source target delta
 
 Decode target from source and delta
 
-java -jar XDeltaEncoder.jar -d [options] source delta target
+         java -jar XDeltaEncoder.jar -d [options] source delta target
 
 Verify created delta against existing target
 
-java -jar XDeltaEncoder.jar -v [options] source delta target
+         java -jar XDeltaEncoder.jar -v [options] source delta target
 
 Merge two consecutive delta files
 
@@ -34,7 +34,7 @@ delta1 and delta2 are merged to new merged delta so as file3 can be decoded dire
 
 file1 --> merged --> file3
 
-java -jar XDeltaEncoder.jar -m [options] delta1 delta2 merged
+         java -jar XDeltaEncoder.jar -m [options] delta1 delta2 merged
 
 Consistency check between delta1 and delta2 is NOT made.
 
@@ -60,11 +60,11 @@ So, when revdelta is created, file3 can be decoded using file1, delta2 and revde
 
 Compute reverse delta from delta1 and delta2:
 
-java -Xmx2048m -jar XDeltaEncoder.jar [options] -r revdelta delta1 delta2
+         java -Xmx2048m -jar XDeltaEncoder.jar [options] -r revdelta delta1 delta2
 
 Decode file3 using reverse delta, file1 and delta2:
 
-java -Xmx2048m -jar XDeltaEncoder.jar [options] -d -r revdelta file1 delta2 file3
+         java -Xmx2048m -jar XDeltaEncoder.jar [options] -d -r revdelta file1 delta2 file3
 
 Upgrade reverse delta:
 
@@ -76,7 +76,7 @@ with revdelta computing file3 from revdelta, file1 and delta2
 
 compute revdelta2
 
-java -Xmx2048m -jar XDeltaEncoder.jar [options] -r revdelta2 -u revdelta delta2 delta3
+         java -Xmx2048m -jar XDeltaEncoder.jar [options] -r revdelta2 -u revdelta delta2 delta3
 
 so as file4 can be computed from revdelta2, file1 and delta3:
 
@@ -110,7 +110,7 @@ Help and support
 ================
 Run the software without parameters to get help:
 
-java -jar XDeltaEncoder.jar
+         java -jar XDeltaEncoder.jar
 
 You are welcome to submit a bug report or suggest an enhancement at the Issues page.
 
