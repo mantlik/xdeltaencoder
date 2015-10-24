@@ -85,6 +85,7 @@ When differences between file1, file2, file3 ... filen are not very significant,
 Options
 =======
 Encode options: 
+
          -c chunksize     start chunk size in bytes
          -b blocksize     block size processed in 1 pass in bytes - default 128m
          -t               test the best block size (deprecated)
@@ -98,6 +99,7 @@ Encode options:
                           Used only in conjunction with all of the following switches:
                           -p -b -tb
 Decode options:
+
          -so              split output - useful when JVM cannot handle big files
          -mo              merge splitted output when finished (Linux only)
          -jd              join delta from splitted parts - delta means delta prefix
